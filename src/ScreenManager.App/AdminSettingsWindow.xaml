@@ -7,6 +7,7 @@
         Width="1200"
         Height="760"
         WindowStartupLocation="CenterScreen"
+        Topmost="True"
         Background="#0E141B">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />

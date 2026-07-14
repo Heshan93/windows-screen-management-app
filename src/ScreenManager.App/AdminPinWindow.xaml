@@ -5,6 +5,7 @@
         Width="340"
         Height="460"
         WindowStartupLocation="CenterOwner"
+        Topmost="True"
         ResizeMode="NoResize"
         Background="#101418">
     <Grid Margin="16">

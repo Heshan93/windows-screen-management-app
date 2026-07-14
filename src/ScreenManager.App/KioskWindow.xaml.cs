@@ -107,7 +107,7 @@ public partial class KioskWindow : Window
         Closed += OnClosed;
         Closing += OnClosing;
         PreviewKeyDown += OnPreviewKeyDown;
-        MouseLeftButtonDown += OnMouseLeftButtonDown;
+        PreviewMouseLeftButtonDown += OnPreviewMouseLeftButtonDown;
     }
 
     public void RequestClose()
@@ -919,15 +919,25 @@ public partial class KioskWindow : Window
         }
     }
 
-    private async void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private async void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         var point = e.GetPosition(this);
-        var inTopRight = point.X >= ActualWidth - 120 && point.Y <= 120;
-        if (!inTopRight)
+        if (!IsInCornerTapZone(point))
         {
             return;
         }
 
+        await RegisterCornerTapAsync();
+    }
+
+    private async void OnAdminTapHotspotMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        await RegisterCornerTapAsync();
+    }
+
+    private async Task RegisterCornerTapAsync()
+    {
         var now = DateTimeOffset.UtcNow;
         _cornerTapHistory.Enqueue(now);
         while (_cornerTapHistory.Count > 0 && (now - _cornerTapHistory.Peek()).TotalSeconds > 3)
@@ -942,23 +952,35 @@ public partial class KioskWindow : Window
         }
     }
 
+    private bool IsInCornerTapZone(System.Windows.Point point)
+    {
+        return point.X >= ActualWidth - 140 && point.Y <= 140;
+    }
+
     private Task OpenAdminSettingsAsync(string trigger)
     {
         return Dispatcher.InvokeAsync(() =>
         {
-            var pinWindow = ActivatorUtilities.CreateInstance<AdminPinWindow>(_services);
-            pinWindow.Owner = this;
-            var unlocked = pinWindow.ShowDialog() == true;
-            if (!unlocked)
+            try
             {
-                _logger.Warning("Admin access denied. Trigger: {Trigger}", trigger);
-                return;
-            }
+                var pinWindow = ActivatorUtilities.CreateInstance<AdminPinWindow>(_services);
+                var unlocked = pinWindow.ShowDialog() == true;
+                if (!unlocked)
+                {
+                    _logger.Warning("Admin access denied. Trigger: {Trigger}", trigger);
+                    return;
+                }
 
-            var settingsWindow = ActivatorUtilities.CreateInstance<AdminSettingsWindow>(_services);
-            settingsWindow.Owner = this;
-            settingsWindow.ShowDialog();
-            _logger.Information("Admin settings closed. Trigger: {Trigger}", trigger);
+                _logger.Information("Admin access granted. Trigger: {Trigger}", trigger);
+
+                var settingsWindow = ActivatorUtilities.CreateInstance<AdminSettingsWindow>(_services);
+                settingsWindow.ShowDialog();
+                _logger.Information("Admin settings closed. Trigger: {Trigger}", trigger);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to open admin settings. Trigger: {Trigger}", trigger);
+            }
         }).Task;
     }
 
@@ -969,7 +991,7 @@ public partial class KioskWindow : Window
         _connectivityClient.Dispose();
         _configService.ConfigChanged -= OnConfigChanged;
         PreviewKeyDown -= OnPreviewKeyDown;
-        MouseLeftButtonDown -= OnMouseLeftButtonDown;
+        PreviewMouseLeftButtonDown -= OnPreviewMouseLeftButtonDown;
         CleanupWebView();
     }
 

@@ -11,6 +11,7 @@
     <Grid x:Name="RootGrid" Background="Black">
         <Border x:Name="FallbackOverlay"
                 Background="#E6111111"
+                Panel.ZIndex="100"
                 Visibility="Collapsed">
             <Grid Margin="40">
                 <Grid.RowDefinitions>
@@ -90,5 +91,14 @@
                 </Grid>
             </Grid>
         </Border>
+
+        <Border x:Name="AdminTapHotspot"
+            Width="140"
+            Height="140"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            Background="Transparent"
+            Panel.ZIndex="5000"
+            MouseLeftButtonDown="OnAdminTapHotspotMouseLeftButtonDown" />
     </Grid>
 </Window>
