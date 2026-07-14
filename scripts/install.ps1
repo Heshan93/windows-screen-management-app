@@ -19,7 +19,8 @@
 #>
 param(
     [string]$MsiPath,
-    [switch]$SkipWebView2
+    [switch]$SkipWebView2,
+    [switch]$NoLaunch
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +28,16 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 if ([string]::IsNullOrWhiteSpace($MsiPath)) {
-    $MsiPath = Join-Path $repoRoot "src/ScreenManager.Packaging/ScreenManager.Installer/bin/x64/Release/ScreenManager.Installer.msi"
+    # Prefer an MSI sitting next to this script (ready-to-ship deploy folder),
+    # then fall back to the local Release build output.
+    $besideScript = Join-Path $PSScriptRoot "ScreenManager.Installer.msi"
+    $buildOutput = Join-Path $repoRoot "src/ScreenManager.Packaging/ScreenManager.Installer/bin/x64/Release/ScreenManager.Installer.msi"
+    if (Test-Path $besideScript) {
+        $MsiPath = $besideScript
+    }
+    else {
+        $MsiPath = $buildOutput
+    }
 }
 
 if (-not (Test-Path $MsiPath)) {
@@ -79,3 +89,54 @@ if ($install.ExitCode -ne 0) {
 }
 
 Write-Host "Installation complete."
+
+# --- Post-install diagnostics: confirm the runtime prerequisites and the app itself. ---
+$programData = Join-Path ${env:ProgramData} "OrderBuddy\ScreenManager"
+Write-Host ""
+Write-Host "Post-install checks:"
+$wv2Status = "MISSING"
+if (Test-WebView2Installed) { $wv2Status = "present" }
+Write-Host ("  WebView2 runtime : {0}" -f $wv2Status)
+$exe = Join-Path ${env:ProgramFiles} "OrderBuddy\ScreenManager\ScreenManager.App.exe"
+if (Test-Path $exe) {
+    $exeItem = Get-Item $exe
+    Write-Host ("  App executable   : {0} ({1:N1} MB)" -f $exe, ($exeItem.Length / 1MB))
+}
+else {
+    Write-Warning ("  App executable   : NOT FOUND at {0}" -f $exe)
+}
+Write-Host ("  ProgramData dir  : {0}" -f $programData)
+
+# Launch the app now so the operator sees it immediately (the setup wizard
+# appears on first run). The Scheduled Task also starts it on every logon.
+if (-not $NoLaunch.IsPresent) {
+    if (Test-Path $exe) {
+        Write-Host ""
+        Write-Host "Starting OrderBuddy Screen Manager..."
+        $proc = Start-Process -FilePath $exe -PassThru
+
+        # Give it a few seconds, then check whether it is still running. A silent, immediate
+        # exit means an early startup crash — point the operator to the diagnostics log.
+        Start-Sleep -Seconds 6
+        $proc.Refresh()
+        if ($proc.HasExited) {
+            Write-Warning "The app started but exited within a few seconds (exit code $($proc.ExitCode))."
+            Write-Warning "This indicates an early startup problem. Check the diagnostics logs:"
+            $diag = Join-Path $programData "startup-diagnostics.log"
+            $tempDiag = Join-Path ${env:TEMP} "OrderBuddy-ScreenManager-startup.log"
+            foreach ($d in @($diag, $tempDiag)) {
+                if (Test-Path $d) {
+                    Write-Warning "  --- $d (last 40 lines) ---"
+                    Get-Content $d -Tail 40 | ForEach-Object { Write-Host "    $_" }
+                }
+            }
+            Write-Warning "Full logs also under: $programData\logs\"
+        }
+        else {
+            Write-Host "App is running (PID $($proc.Id)). The setup wizard should be visible."
+        }
+    }
+    else {
+        Write-Warning "Could not find $exe to launch. It will start automatically on next sign-in."
+    }
+}

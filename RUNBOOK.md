@@ -26,25 +26,35 @@
 
 ## 3. Installation
 
-### Step 1 — Open an **elevated** PowerShell prompt
+### Easiest way — one double-click (recommended)
 
-Right-click PowerShell → **Run as Administrator**.
+1. Copy the **deploy folder** (`artifacts\deploy\`) to the target PC — for example onto the Desktop or into `C:\Temp\`. It contains:
+   - `Install-OrderBuddy.bat`
+   - `ScreenManager.Installer.msi`
+   - `install.ps1`
+   - `RUNBOOK.md`
+2. **Double-click `Install-OrderBuddy.bat`.**
+3. Click **Yes** on the Windows "Do you want to allow this app to make changes?" (UAC) prompt.
 
-### Step 2 — Run the install script
+That's it. The installer will automatically:
+- Install the **WebView2 runtime** if it is missing,
+- Install the app to `C:\Program Files\OrderBuddy\ScreenManager\`,
+- Register auto-start, and
+- Launch the app — the **Setup Wizard** appears on screen.
+
+No command line, no PowerShell knowledge required.
+
+### Alternative — run the PowerShell script directly
+
+From an **elevated** PowerShell prompt (Run as Administrator):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\path\to\scripts\install.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\path\to\install.ps1"
 ```
 
-This script does two things:
-1. **Checks for WebView2 runtime** — if missing, downloads and installs it silently.
-2. **Installs the MSI** — copies the app to `C:\Program Files\OrderBuddy\ScreenManager\` and registers auto-start.
+This does the same thing as the batch file (WebView2 check → MSI install → launch).
 
-### Step 3 — Reboot or log off/on
-
-The app will start automatically on next login.
-
-### Alternative: Manual MSI install
+### Alternative — Manual MSI install
 
 ```powershell
 # Elevated prompt
@@ -56,6 +66,9 @@ msiexec /i "ScreenManager.Installer.msi" /qn /norestart
 | `/qn` | Fully silent (no UI) |
 | `/qb` | Basic UI (progress bar) |
 | `/norestart` | Don't reboot after install |
+
+> After a manual MSI install the app starts on next sign-in (or start it now from
+> `C:\Program Files\OrderBuddy\ScreenManager\ScreenManager.App.exe`).
 
 ---
 

@@ -210,6 +210,7 @@
             <TextBlock Text="Unsaved changes"
                        Foreground="#FFCC66"
                        Visibility="{Binding HasUnsavedChanges, Converter={StaticResource BoolToVisibility}}"/>
+            <Button Content="Exit Application" DockPanel.Dock="Left" Width="140" Background="#CC3333" Foreground="White" FontWeight="Bold" Click="ExitApp_Click"/>
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
                 <Button Content="Save" Width="120" Margin="0,0,8,0" Click="Save_Click"/>
                 <Button Content="Close" Width="120" Click="Close_Click"/>

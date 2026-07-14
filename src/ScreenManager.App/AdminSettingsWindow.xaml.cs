@@ -40,6 +40,21 @@ public partial class AdminSettingsWindow : Window
         Close();
     }
 
+    private void ExitApp_Click(object sender, RoutedEventArgs e)
+    {
+        var result = System.Windows.MessageBox.Show(
+            "Are you sure you want to exit OrderBuddy Screen Manager?\n\nAll kiosk screens will close. The app will restart automatically if auto-start is enabled.",
+            "Exit Application",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+
+        if (result == System.Windows.MessageBoxResult.Yes)
+        {
+            Close();
+            System.Windows.Application.Current.Shutdown();
+        }
+    }
+
     private void IdentifyScreens_Click(object sender, RoutedEventArgs e)
     {
         _vm.IdentifyScreens();
