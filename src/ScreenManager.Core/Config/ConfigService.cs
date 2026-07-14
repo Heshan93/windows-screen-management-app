@@ -170,6 +170,19 @@ public sealed class ConfigService : IConfigService, IDisposable
             {
                 File.Delete(tempFile);
             }
+
+            if (OperatingSystem.IsWindows() && ConfigFileAcl.ShouldApplyAcl(_options.ConfigFilePath))
+            {
+                if (!ConfigFileAcl.TryApplyAdminSystemWriteAcl(_options.ConfigFilePath, out var configAclDiagnostic))
+                {
+                    diagnostics.Add(configAclDiagnostic);
+                }
+
+                if (!ConfigFileAcl.TryApplyAdminSystemWriteAcl(_options.BackupFilePath, out var backupAclDiagnostic))
+                {
+                    diagnostics.Add(backupAclDiagnostic);
+                }
+            }
         }
         finally
         {

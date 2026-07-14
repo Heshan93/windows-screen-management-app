@@ -1,10 +1,12 @@
 ﻿using System.IO;
 using System.Text.Json;
+using System.Threading;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using OrderBuddy.ScreenManager.App.Browser;
 using OrderBuddy.ScreenManager.App.Display;
+using OrderBuddy.ScreenManager.App.Security;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using OrderBuddy.ScreenManager.Core.Health;
@@ -18,8 +20,12 @@ namespace OrderBuddy.ScreenManager.App;
 /// </summary>
 public partial class App : System.Windows.Application
 {
+	private static Mutex? _singleInstanceMutex;
+
 	private IHost? _host;
 	private KioskSupervisor? _supervisor;
+	private IKeyboardLockService? _keyboardLockService;
+	private IConfigService? _configService;
 
 	protected override async void OnStartup(StartupEventArgs e)
 	{
@@ -27,6 +33,15 @@ public partial class App : System.Windows.Application
 
 		var bootstrap = BootstrapConfiguration.Load();
 		ConfigureSerilog(bootstrap);
+
+		_singleInstanceMutex = new Mutex(true, "Global\\OrderBuddy.ScreenManager.v2", out var isFirstInstance);
+		if (!isFirstInstance)
+		{
+			Log.Warning("Second launch detected. Exiting due to single-instance guard.");
+			Log.CloseAndFlush();
+			Shutdown();
+			return;
+		}
 		var browserOptions = KioskBrowserOptions.Create(bootstrap.ProgramDataRoot);
 
 		_host = Host.CreateDefaultBuilder()
@@ -40,6 +55,7 @@ public partial class App : System.Windows.Application
 				services.AddSingleton<IConfigService, ConfigService>();
 				services.AddSingleton<IDisplayManager, WindowsDisplayManager>();
 				services.AddSingleton<IHealthMonitor, PlaceholderHealthMonitor>();
+				services.AddSingleton<IKeyboardLockService, WindowsKeyboardLockService>();
 				services.AddSingleton<Serilog.ILogger>(Log.Logger);
 				services.AddSingleton<KioskSupervisor>();
 				services.AddTransient<KioskWindow>();
@@ -48,13 +64,50 @@ public partial class App : System.Windows.Application
 
 		await _host.StartAsync();
 
+		_configService = _host.Services.GetRequiredService<IConfigService>();
+		_keyboardLockService = _host.Services.GetRequiredService<IKeyboardLockService>();
+		ApplyKeyboardLock(_configService.CurrentConfig.General.LockSystemKeys);
+		_configService.ConfigChanged += OnConfigChanged;
+
 		_supervisor = _host.Services.GetRequiredService<KioskSupervisor>();
 		_supervisor.Start();
 		Log.Information("OrderBuddy Screen Manager started. Environment initialized.");
 	}
 
+	private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
+	{
+		ApplyKeyboardLock(e.NewConfig.General.LockSystemKeys);
+	}
+
+	private void ApplyKeyboardLock(bool enabled)
+	{
+		if (_keyboardLockService is null)
+		{
+			return;
+		}
+
+		if (enabled)
+		{
+			_keyboardLockService.Start();
+			return;
+		}
+
+		_keyboardLockService.Stop();
+	}
+
 	protected override async void OnExit(ExitEventArgs e)
 	{
+		if (_configService is not null)
+		{
+			_configService.ConfigChanged -= OnConfigChanged;
+		}
+
+		_keyboardLockService?.Stop();
+		if (_keyboardLockService is IDisposable disposableKeyboardLock)
+		{
+			disposableKeyboardLock.Dispose();
+		}
+
 		_supervisor?.Dispose();
 
 		if (_host is not null)
@@ -64,6 +117,11 @@ public partial class App : System.Windows.Application
 		}
 
 		Log.CloseAndFlush();
+
+		_singleInstanceMutex?.ReleaseMutex();
+		_singleInstanceMutex?.Dispose();
+		_singleInstanceMutex = null;
+
 		base.OnExit(e);
 	}
 

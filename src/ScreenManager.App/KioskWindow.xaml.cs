@@ -7,6 +7,7 @@ using OrderBuddy.ScreenManager.App.Browser;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using OrderBuddy.ScreenManager.Core.Health;
+using OrderBuddy.ScreenManager.Core.Security;
 using Serilog;
 
 namespace OrderBuddy.ScreenManager.App;
@@ -26,6 +27,7 @@ public partial class KioskWindow : Window
     private ScreenConfig? _activeScreen;
     private DisplayInfo? _activeDisplay;
     private bool _isLoaded;
+    private bool _allowClose;
 
     public KioskWindow(
         KioskBrowserOptions browserOptions,
@@ -47,6 +49,13 @@ public partial class KioskWindow : Window
         InitializeComponent();
         Loaded += OnLoaded;
         Closed += OnClosed;
+        Closing += OnClosing;
+    }
+
+    public void RequestClose()
+    {
+        _allowClose = true;
+        Close();
     }
 
     public void ApplyBinding(ScreenConfig screen, DisplayInfo display)
@@ -189,22 +198,31 @@ public partial class KioskWindow : Window
     {
         settings.AreDefaultContextMenusEnabled = false;
         settings.AreDevToolsEnabled = false;
+        settings.AreBrowserAcceleratorKeysEnabled = false;
         settings.IsStatusBarEnabled = false;
         settings.IsZoomControlEnabled = false;
 
-        _logger.Information("WebView2 settings applied: context-menu/devtools/statusbar/zoom-control disabled.");
+        _logger.Information("WebView2 settings applied: context-menu/devtools/accelerators/statusbar/zoom-control disabled.");
     }
 
     private void HookWebViewEvents(CoreWebView2 core)
     {
         core.ProcessFailed += OnWebViewProcessFailed;
         core.NavigationCompleted += OnNavigationCompleted;
+        core.NavigationStarting += OnNavigationStarting;
+        core.NewWindowRequested += OnNewWindowRequested;
+        core.PermissionRequested += OnPermissionRequested;
+        core.ServerCertificateErrorDetected += OnServerCertificateErrorDetected;
     }
 
     private void UnhookWebViewEvents(CoreWebView2 core)
     {
         core.ProcessFailed -= OnWebViewProcessFailed;
         core.NavigationCompleted -= OnNavigationCompleted;
+        core.NavigationStarting -= OnNavigationStarting;
+        core.NewWindowRequested -= OnNewWindowRequested;
+        core.PermissionRequested -= OnPermissionRequested;
+        core.ServerCertificateErrorDetected -= OnServerCertificateErrorDetected;
     }
 
     private async void OnWebViewProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
@@ -236,6 +254,105 @@ public partial class KioskWindow : Window
             _webView?.CoreWebView2?.Source,
             e.WebErrorStatus,
             e.HttpStatusCode);
+    }
+
+    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+    {
+        if (_activeScreen is null)
+        {
+            return;
+        }
+
+        var decision = KioskSecurityPolicy.EvaluateNavigation(_activeScreen, e.Uri);
+        if (decision.Allow)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        _logger.Warning(
+            "Blocked navigation by policy. ScreenId: {ScreenId}, Source: {Source}, Reason: {Reason}",
+            _activeScreen.Id,
+            e.Uri,
+            decision.Reason);
+    }
+
+    private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+    {
+        if (_activeScreen is null)
+        {
+            e.Handled = true;
+            _logger.Warning("Blocked popup because no active screen is bound. Source: {Source}", e.Uri);
+            return;
+        }
+
+        var action = KioskSecurityPolicy.EvaluatePopupPolicy(_activeScreen);
+        switch (action)
+        {
+            case PopupAction.Block:
+                e.Handled = true;
+                _logger.Warning("Blocked popup by policy. ScreenId: {ScreenId}, Source: {Source}", _activeScreen.Id, e.Uri);
+                break;
+
+            case PopupAction.RedirectSameWindow:
+                e.Handled = true;
+                if (_webView?.CoreWebView2 is not null && !string.IsNullOrWhiteSpace(e.Uri))
+                {
+                    _webView.CoreWebView2.Navigate(e.Uri);
+                    _logger.Information(
+                        "Popup redirected into same window. ScreenId: {ScreenId}, Source: {Source}",
+                        _activeScreen.Id,
+                        e.Uri);
+                }
+                break;
+
+            case PopupAction.AllowNewWindow:
+                e.Handled = false;
+                _logger.Information("Popup allowed by policy. ScreenId: {ScreenId}, Source: {Source}", _activeScreen.Id, e.Uri);
+                break;
+        }
+    }
+
+    private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    {
+        var allow = _activeScreen?.AutoGrantPermissions == true;
+
+        e.State = allow ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+        e.Handled = true;
+
+        _logger.Information(
+            "Permission request handled. ScreenId: {ScreenId}, Kind: {PermissionKind}, Origin: {Origin}, Decision: {Decision}",
+            _activeScreen?.Id,
+            e.PermissionKind,
+            e.Uri,
+            allow ? "Allow" : "Deny");
+    }
+
+    private void OnServerCertificateErrorDetected(object? sender, CoreWebView2ServerCertificateErrorDetectedEventArgs e)
+    {
+        var allow = _activeScreen?.AllowInsecureCertificates == true;
+
+        e.Action = allow
+            ? CoreWebView2ServerCertificateErrorAction.AlwaysAllow
+            : CoreWebView2ServerCertificateErrorAction.Cancel;
+
+        _logger.Warning(
+            "Server certificate policy applied. ScreenId: {ScreenId}, Uri: {Uri}, Error: {Error}, Decision: {Decision}",
+            _activeScreen?.Id,
+            e.RequestUri,
+            e.ErrorStatus,
+            allow ? "AlwaysAllow" : "Cancel");
+    }
+
+    private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_allowClose)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        _logger.Warning("Blocked manual close attempt for kiosk window.");
     }
 
     private void OnClosed(object? sender, EventArgs e)

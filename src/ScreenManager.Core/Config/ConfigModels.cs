@@ -36,6 +36,7 @@ public sealed record GeneralSettings
 {
     public bool AutoStartOnLogin { get; init; } = true;
     public bool AutoReconnect { get; init; } = true;
+    public bool LockSystemKeys { get; init; } = false;
     public List<int> RetryBackoffSec { get; init; } = [5, 10, 30, 60];
     public int OfflineTimeoutSec { get; init; } = 20;
     public string LogLevel { get; init; } = "Information";
@@ -69,6 +70,10 @@ public sealed record ScreenConfig
     public int StartupDelaySec { get; init; } = 0;
     public int ReloadIntervalSec { get; init; } = 0;
     public bool FullScreen { get; init; } = true;
+    public bool AllowPopups { get; init; } = false;
+    public bool RedirectPopupsToSameWindow { get; init; } = true;
+    public bool AutoGrantPermissions { get; init; } = true;
+    public bool AllowInsecureCertificates { get; init; } = false;
     public int RotationDegrees { get; init; } = 0;
     public int ZoomPercent { get; init; } = 100;
     public List<string> AllowedDomains { get; init; } = [];

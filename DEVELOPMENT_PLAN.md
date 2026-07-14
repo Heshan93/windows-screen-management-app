@@ -14,7 +14,7 @@
 | P1 | Spike: WebView2 kiosk window | 7 | ☑ 7/7 | URL renders full-screen + reload on crash |
 | P2 | Config service & schema | 8 | ☑ 8/8 | Load/validate/save/migrate/backup proven |
 | P3 | Multi-display core | 8 | ☑ 8/8 | N monitors → N windows, stable-key binding |
-| P4 | Kiosk lockdown & security | 9 | ☐ 0/9 | Cannot exit; nav locked; single instance |
+| P4 | Kiosk lockdown & security | 9 | ☑ 9/9 | Cannot exit; nav locked; single instance |
 | P5 | Health monitoring & recovery | 9 | ☐ 0/9 | All injected faults self-heal, no thrash |
 | P6 | Fallback & offline behaviour | 7 | ☐ 0/7 | Branded fallback + correct offline cause |
 | P7 | Admin UX (wizard + Display Wall) | 10 | ☐ 0/10 | Non-tech user configures 3 screens unaided |
@@ -23,7 +23,7 @@
 | P10 | Auto-update & hardening | 6 | ☐ 0/6 | Signed delta update + rollback verified |
 | P11 | Remote-ready hooks (optional) | 5 | ☐ 0/5 | Config pull behind flag, no regression |
 | P12 | QA, soak & release | 8 | ☐ 0/8 | Full test matrix green; 72h soak passes |
-| **Total** | | **96** | **◐ 29/96** | Production release |
+| **Total** | | **96** | **◐ 38/96** | Production release |
 
 > Update the counts as tasks complete (e.g. `◐ 3/8`).
 
@@ -137,23 +137,23 @@
 
 **Goal:** Make the kiosk tamper-resistant; prevent accidental exit; lock navigation; single instance.
 
-- [ ] **P4-1 (P0)** Single-instance guard via named `Mutex`; second launch exits quietly (log).
+- [x] **P4-1 (P0)** Single-instance guard via named `Mutex`; second launch exits quietly (log).
   - *Accept:* launching twice yields one running instance.
-- [ ] **P4-2 (P0)** Suppress browser accelerator keys (F5, Ctrl+R, back/forward, Ctrl+P unless allowed) via WebView2 accelerator-key handler.
+- [x] **P4-2 (P0)** Suppress browser accelerator keys (F5, Ctrl+R, back/forward, Ctrl+P unless allowed) via WebView2 accelerator-key handler.
   - *Accept:* those keys do nothing in kiosk mode.
-- [ ] **P4-3 (P0)** Block Alt+F4 / close; intercept `Window.Closing` unless admin-authorised exit.
+- [x] **P4-3 (P0)** Block Alt+F4 / close; intercept `Window.Closing` unless admin-authorised exit.
   - *Accept:* Alt+F4 does not close kiosk windows.
-- [ ] **P4-4 (P0)** Global low-level keyboard hook (optional, config-gated) to swallow Win key / Ctrl+Esc.
+- [x] **P4-4 (P0)** Global low-level keyboard hook (optional, config-gated) to swallow Win key / Ctrl+Esc.
   - *Accept:* Win key doesn't drop to desktop when enabled.
-- [ ] **P4-5 (P0)** Navigation lockdown: optional domain allow-list; block/redirect off-list + `file:`/`about:`.
+- [x] **P4-5 (P0)** Navigation lockdown: optional domain allow-list; block/redirect off-list + `file:`/`about:`.
   - *Accept:* off-list link is blocked and logged.
-- [ ] **P4-6 (P0)** New-window/popup policy: redirect to same window or block per config.
+- [x] **P4-6 (P0)** New-window/popup policy: redirect to same window or block per config.
   - *Accept:* `target=_blank` doesn't spawn an uncontrolled window.
-- [ ] **P4-7 (P1)** Per-screen permission auto-grant (media/geo/notification/clipboard) via `PermissionRequested`.
+- [x] **P4-7 (P1)** Per-screen permission auto-grant (media/geo/notification/clipboard) via `PermissionRequested`.
   - *Accept:* camera/mic/geo prompts auto-resolve per config.
-- [ ] **P4-8 (P1)** Config file ACL: restrict write to Administrators/SYSTEM.
+- [x] **P4-8 (P1)** Config file ACL: restrict write to Administrators/SYSTEM.
   - *Accept:* standard user cannot modify config file.
-- [ ] **P4-9 (P1)** SSL/cert error policy: reject by default; per-screen opt-in "allow insecure" (logged).
+- [x] **P4-9 (P1)** SSL/cert error policy: reject by default; per-screen opt-in "allow insecure" (logged).
   - *Accept:* self-signed site blocked unless opted-in.
 
 **Exit gate:** cannot exit or navigate away without authorisation; one instance only.
@@ -409,6 +409,7 @@ flowchart LR
 
 | Date | Phase/Task | Change / decision | By |
 |---|---|---|---|
+| 2026-07-14 | P4 complete | Implemented kiosk lockdown/security end-to-end: single-instance mutex guard with explicit second-launch warning log, close prevention (`Window.Closing` + supervisor-authorized `RequestClose()`), optional global keyboard lock service wiring from config (`LockSystemKeys`) with live apply on config change, navigation lockdown (`file:`/`about:`/off-list domain blocked), popup policy (block/redirect/allow-new-window based on screen settings), permission auto-resolution from per-screen `AutoGrantPermissions`, certificate error policy from per-screen `AllowInsecureCertificates`, and config ACL hardening for `%ProgramData%` config/backup (`Administrators` + `SYSTEM`, path-gated to avoid temp/test file lockouts). Decision note: browser accelerator suppression implemented using `CoreWebView2Settings.AreBrowserAcceleratorKeysEnabled = false` because `AcceleratorKeyPressed` was unavailable in the current WebView2 API surface. Validation: Debug + Release builds succeed (0 errors/0 warnings), tests 22/22 passed in both configurations, policy tests added in `P4SecurityPolicyTests`, and runtime logs captured single-instance behavior (`Second launch detected. Exiting due to single-instance guard.`) plus hardened WebView2 settings line including accelerator disable. | — |
 | 2026-07-13 | — | Development plan created from DESIGN.md | — |
 | 2026-07-13 | P0 complete | All 6 tasks done. Solution: 3 projects (App/Core/Tests). Build: 0 errors/0 warnings (Debug + Release). Tests: 6/6 passed. Added `Serilog.Extensions.Hosting` (missing from initial pinning). Removed `Class1.cs` stub. DI host + Serilog rolling file + EventLog sink wired. `Directory.Packages.props` central versioning active. `.editorconfig`/`.gitignore`/`Directory.Build.props`/`README.md`/`.github/workflows/ci.yml` all present. | — |
 | 2026-07-14 | P1 complete | Implemented `KioskWindow` full-screen borderless top-most on primary monitor with embedded WebView2 and shared environment provider. WebView2 user-data path: `%ProgramData%\OrderBuddy\ScreenManager\webview2`. Applied settings lockdown (context menu/devtools/statusbar/zoom disabled). Added autoplay arg `--autoplay-policy=no-user-gesture-required`. Added `NavigationCompleted` logging with success/error status. Added `ProcessFailed` recovery (reinitialize + reload) and fixed crash-path cleanup bug discovered during forced browser-process kill test. Validation: Build 0 errors/0 warnings, tests 6/6 passed. Runtime evidence in logs: successful navigation (HTTP 200), forced process failure detected and recovered. Baseline metrics: ColdStartMs 1305, idle WorkingSet ~95.38 MB. | — |

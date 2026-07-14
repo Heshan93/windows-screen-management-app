@@ -70,7 +70,7 @@ public sealed class KioskSupervisor : IDisposable
         var staleScreens = _windows.Keys.Where(id => !activeScreenIds.Contains(id)).ToList();
         foreach (var staleScreenId in staleScreens)
         {
-            _windows[staleScreenId].Close();
+            _windows[staleScreenId].RequestClose();
             _windows.Remove(staleScreenId);
             _logger.Information("Closed window for stale screen binding {ScreenId}.", staleScreenId);
         }
@@ -122,7 +122,7 @@ public sealed class KioskSupervisor : IDisposable
 
         foreach (var window in _windows.Values.ToList())
         {
-            window.Close();
+            window.RequestClose();
         }
 
         _windows.Clear();

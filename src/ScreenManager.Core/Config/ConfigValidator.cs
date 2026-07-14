@@ -37,6 +37,17 @@ internal static class ConfigValidator
         {
             var fixedScreen = screen;
 
+            var allowedDomains = (screen.AllowedDomains ?? [])
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Select(d => d.Trim().ToLowerInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            fixedScreen = fixedScreen with
+            {
+                AllowedDomains = allowedDomains
+            };
+
             if (!Uri.TryCreate(screen.Url, UriKind.Absolute, out var uri) ||
                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             {
