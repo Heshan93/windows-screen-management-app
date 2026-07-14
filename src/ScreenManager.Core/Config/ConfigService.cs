@@ -69,7 +69,7 @@ public sealed class ConfigService : IConfigService, IDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        await Task.Run(() =>
+        var saved = await Task.Run(() =>
         {
             lock (_sync)
             {
@@ -82,8 +82,15 @@ public sealed class ConfigService : IConfigService, IDisposable
 
                 CurrentConfig = normalized;
                 _lastDiagnostics = diagnostics;
+                return normalized;
             }
         }, cancellationToken);
+
+        // Notify listeners deterministically so kiosk windows re-apply the new URL/zoom/etc.
+        // immediately. The FileSystemWatcher is suppressed during our own writes (_isInternalSave),
+        // so relying on it would make saves apply only after an unrelated event or an app restart.
+        // The watcher's own reload compares JSON and no-ops when it later observes the same content.
+        ConfigChanged?.Invoke(this, new ConfigChangedEventArgs(saved));
     }
 
     public string GetLogLevel() => CurrentConfig.General.LogLevel;

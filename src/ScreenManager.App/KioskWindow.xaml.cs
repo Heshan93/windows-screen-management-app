@@ -29,9 +29,14 @@ namespace OrderBuddy.ScreenManager.App;
 public partial class KioskWindow : Window
 {
     private const string HeartbeatScript =
-        "(function(){if(window.__obHbInstalled){return;}window.__obHbInstalled=true;" +
-        "function postHb(){if(window.chrome&&window.chrome.webview){window.chrome.webview.postMessage({type:'heartbeat',ts:Date.now()});}}" +
-        "postHb();setInterval(postHb,5000);})();";
+        "(function(){if(window.__obInstalled){return;}window.__obInstalled=true;" +
+        "function post(m){if(window.chrome&&window.chrome.webview){window.chrome.webview.postMessage(m);}}" +
+        "function hb(){post({type:'heartbeat',ts:Date.now()});}hb();setInterval(hb,5000);" +
+        "var taps=[];" +
+        "function cue(x,y){try{var d=document.createElement('div');d.style.cssText='position:fixed;z-index:2147483647;width:90px;height:90px;border-radius:50%;pointer-events:none;left:'+(x-45)+'px;top:'+(y-45)+'px;background:rgba(0,150,255,0.45);border:2px solid #fff;transition:opacity .5s,transform .5s;opacity:1;transform:scale(0.6);';(document.body||document.documentElement).appendChild(d);requestAnimationFrame(function(){d.style.opacity='0';d.style.transform='scale(1.5)';});setTimeout(function(){d.remove();},520);}catch(e){}}" +
+        "function badge(n){try{var b=document.getElementById('__obAdminBadge');if(!b){b=document.createElement('div');b.id='__obAdminBadge';b.style.cssText='position:fixed;z-index:2147483647;top:8px;right:8px;pointer-events:none;background:#0096ff;color:#fff;font:600 13px sans-serif;padding:4px 10px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.4);';(document.body||document.documentElement).appendChild(b);}b.textContent='Admin '+n+'/5';b.style.opacity='1';clearTimeout(b.__t);b.__t=setTimeout(function(){b.style.transition='opacity .4s';b.style.opacity='0';},1400);}catch(e){}}" +
+        "function tap(x,y){var w=window.innerWidth;if(x<w-140||y>140){taps=[];return;}cue(x,y);var n=Date.now();taps.push(n);taps=taps.filter(function(t){return n-t<=3000;});badge(taps.length);if(taps.length>=5){taps=[];post({type:'admin-gesture'});}}" +
+        "window.addEventListener('pointerdown',function(e){tap(e.clientX,e.clientY);},true);})();";
 
     private readonly KioskBrowserOptions _browserOptions;
     private readonly IWebViewEnvironmentProvider _environmentProvider;
@@ -149,6 +154,14 @@ public partial class KioskWindow : Window
 
     public void ApplyBinding(ScreenConfig screen, DisplayInfo display)
     {
+        var isSameTarget = _webView?.CoreWebView2 is not null
+            && _activeScreen is not null
+            && _activeScreen.Id.Equals(screen.Id, StringComparison.OrdinalIgnoreCase)
+            && _activeDisplay is not null
+            && string.Equals(_activeDisplay.StableKey, display.StableKey, StringComparison.OrdinalIgnoreCase);
+
+        var previousUrl = _activeScreen?.Url;
+
         _activeScreen = screen;
         _activeDisplay = display;
         _lastSuccessfulConnectionUtc = _lastConnectionStore.GetLastSuccessUtc(screen.Id);
@@ -159,10 +172,25 @@ public partial class KioskWindow : Window
 
         ApplyDisplayPlacement(display);
 
-        if (_isLoaded)
+        if (!_isLoaded)
         {
-            _ = InitializeOrReinitializeWebViewAsync();
+            return;
         }
+
+        // If the same screen is already showing on the same display, apply changes in place
+        // (instant zoom, navigate only if the URL changed) instead of a full cold restart.
+        if (isSameTarget && _webView?.CoreWebView2 is not null)
+        {
+            ApplyZoomAndRotation(_webView, screen);
+            if (!string.Equals(previousUrl, screen.Url, StringComparison.Ordinal))
+            {
+                _logger.Information("Applying updated URL in place. ScreenId: {ScreenId}, Url: {Url}", screen.Id, screen.Url);
+                _webView.CoreWebView2.Navigate(screen.Url);
+            }
+            return;
+        }
+
+        _ = InitializeOrReinitializeWebViewAsync();
     }
 
     public void ShowWaitingForDisplay(ScreenConfig screen, DisplayInfo fallbackDisplay)
@@ -376,6 +404,12 @@ public partial class KioskWindow : Window
             _ = PersistLastSuccessfulConnectionAsync(_activeScreen.Id, now);
             HideFallbackOverlay();
 
+            // Re-assert the configured zoom: WebView2 can reset ZoomFactor across navigations.
+            if (_webView is not null)
+            {
+                _webView.ZoomFactor = Math.Clamp(_activeScreen.ZoomPercent / 100.0, 0.25, 5.0);
+            }
+
             _logger.Information(
                 "Navigation completed successfully. ScreenId: {ScreenId}, Source: {Source}, HttpStatusCode: {HttpStatusCode}",
                 _activeScreen.Id,
@@ -503,12 +537,19 @@ public partial class KioskWindow : Window
                 return;
             }
 
-            if (!typeElement.GetString()?.Equals("heartbeat", StringComparison.OrdinalIgnoreCase) ?? true)
+            var messageType = typeElement.GetString();
+            if (string.Equals(messageType, "heartbeat", StringComparison.OrdinalIgnoreCase))
             {
+                _healthMonitor.RecordHeartbeat(_activeScreen.Id, _clock.UtcNow);
                 return;
             }
 
-            _healthMonitor.RecordHeartbeat(_activeScreen.Id, _clock.UtcNow);
+            if (string.Equals(messageType, "admin-gesture", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.Information("Admin corner gesture detected via WebView. ScreenId: {ScreenId}", _activeScreen.Id);
+                _ = OpenAdminSettingsAsync("corner-gesture");
+                return;
+            }
         }
         catch (JsonException)
         {
@@ -574,6 +615,12 @@ public partial class KioskWindow : Window
 
     private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
     {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => OnConfigChanged(sender, e));
+            return;
+        }
+
         _healthMonitor.ApplySettings(
             e.NewConfig.General.RetryBackoffSec,
             e.NewConfig.General.OfflineTimeoutSec,

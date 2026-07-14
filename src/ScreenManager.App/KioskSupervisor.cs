@@ -101,13 +101,25 @@ public sealed class KioskSupervisor : IDisposable
     private void OnDisplaysChanged(object? sender, DisplaysChangedEventArgs e)
     {
         _ = e;
-        ReconcileWindows("display-changed");
+        RunOnUi(() => ReconcileWindows("display-changed"));
     }
 
     private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
     {
         _ = e;
-        ReconcileWindows("config-changed");
+        RunOnUi(() => ReconcileWindows("config-changed"));
+    }
+
+    private static void RunOnUi(Action action)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.Invoke(action);
+            return;
+        }
+
+        action();
     }
 
     private void ReconcileWindows(string reason)

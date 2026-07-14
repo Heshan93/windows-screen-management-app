@@ -15,18 +15,29 @@ internal static class ConfigValidator
         }
 
         var value = raw.Trim();
+
+        // Already a valid absolute http(s) URL: keep the operator's exact text.
         if (Uri.TryCreate(value, UriKind.Absolute, out var direct) &&
             (direct.Scheme == Uri.UriSchemeHttp || direct.Scheme == Uri.UriSchemeHttps))
         {
-            return direct.ToString();
+            return value;
         }
 
-        // Friendly normalization for operator input like "mypos.local" or "example.com/path".
-        if (!value.Contains("://", StringComparison.Ordinal) &&
-            Uri.TryCreate("https://" + value, UriKind.Absolute, out var withHttps) &&
-            (withHttps.Scheme == Uri.UriSchemeHttp || withHttps.Scheme == Uri.UriSchemeHttps))
+        // Friendly normalization for scheme-less input like "mypos.local/app" or "localhost:8080".
+        // Only treat it as a URL if it actually looks like a host (contains a dot or is localhost),
+        // so genuinely invalid text such as "not-a-url" is still rejected.
+        if (!value.Contains("://", StringComparison.Ordinal))
         {
-            return withHttps.ToString();
+            var hostPart = value.Split('/', '?', '#')[0];
+            var looksLikeHost = hostPart.Contains('.', StringComparison.Ordinal)
+                || hostPart.StartsWith("localhost", StringComparison.OrdinalIgnoreCase);
+
+            if (looksLikeHost &&
+                Uri.TryCreate("https://" + value, UriKind.Absolute, out var withHttps) &&
+                (withHttps.Scheme == Uri.UriSchemeHttp || withHttps.Scheme == Uri.UriSchemeHttps))
+            {
+                return "https://" + value;
+            }
         }
 
         return null;
