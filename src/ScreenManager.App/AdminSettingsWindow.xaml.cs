@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Extensions.DependencyInjection;
+using OrderBuddy.ScreenManager.App.Lifecycle;
 using OrderBuddy.ScreenManager.App.ViewModels;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
@@ -20,11 +21,12 @@ public partial class AdminSettingsWindow : Window
         IDisplayManager displayManager,
         IHealthMonitor healthMonitor,
         KioskSupervisor kioskSupervisor,
+        IAutoStartService autoStartService,
         IServiceProvider services)
     {
         InitializeComponent();
         _services = services;
-        _vm = new AdminSettingsViewModel(configService, displayManager, healthMonitor, kioskSupervisor);
+        _vm = new AdminSettingsViewModel(configService, displayManager, healthMonitor, kioskSupervisor, autoStartService);
         DataContext = _vm;
     }
 

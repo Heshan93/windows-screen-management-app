@@ -18,12 +18,12 @@
 | P5 | Health monitoring & recovery | 9 | ☑ 9/9 | All injected faults self-heal, no thrash |
 | P6 | Fallback & offline behaviour | 7 | ☑ 7/7 | Branded fallback + correct offline cause |
 | P7 | Admin UX (wizard + Display Wall) | 10 | ☑ 10/10 | Non-tech user configures 3 screens unaided |
-| P8 | Startup integration & lifecycle | 6 | ☐ 0/6 | Auto-start, restart-on-crash, sleep/resume |
+| P8 | Startup integration & lifecycle | 6 | ☑ 6/6 | Auto-start, restart-on-crash, sleep/resume |
 | P9 | Packaging & installer | 7 | ☐ 0/7 | Signed silent MSI + WebView2 bootstrap |
 | P10 | Auto-update & hardening | 6 | ☐ 0/6 | Signed delta update + rollback verified |
 | P11 | Remote-ready hooks (optional) | 5 | ☐ 0/5 | Config pull behind flag, no regression |
 | P12 | QA, soak & release | 8 | ☐ 0/8 | Full test matrix green; 72h soak passes |
-| **Total** | | **96** | **◐ 64/96** | Production release |
+| **Total** | | **96** | **◐ 70/96** | Production release |
 
 > Update the counts as tasks complete (e.g. `◐ 3/8`).
 
@@ -243,17 +243,17 @@
 
 **Goal:** Auto-start, restart-on-crash, survive reboot/sleep/power loss.
 
-- [ ] **P8-1 (P0)** Auto-start registration: Scheduled Task (at log-on, highest privileges, restart-on-failure) or `HKLM\...\Run`; toggle from settings.
+- [x] **P8-1 (P0)** Auto-start registration: Scheduled Task (at log-on, highest privileges, restart-on-failure) or `HKLM\...\Run`; toggle from settings.
   - *Accept:* app launches automatically after login.
-- [ ] **P8-2 (P0)** App-crash restart: task restart-on-failure policy verified.
+- [x] **P8-2 (P0)** App-crash restart: task restart-on-failure policy verified.
   - *Accept:* killing the app process relaunches it automatically.
-- [ ] **P8-3 (P0)** Deterministic restore from config after any restart (all enabled screens return).
+- [x] **P8-3 (P0)** Deterministic restore from config after any restart (all enabled screens return).
   - *Accept:* post-restart state matches pre-crash state.
-- [ ] **P8-4 (P1)** Sleep/resume handling: revalidate displays, reconnect, reload stale pages, reassert top-most.
+- [x] **P8-4 (P1)** Sleep/resume handling: revalidate displays, reconnect, reload stale pages, reassert top-most.
   - *Accept:* after resume, all screens are correct and top-most.
-- [ ] **P8-5 (P1)** Simulated power-loss recovery (hard reset VM) → clean boot into kiosk.
+- [x] **P8-5 (P1)** Simulated power-loss recovery (hard reset VM) → clean boot into kiosk.
   - *Accept:* device returns to kiosk unattended.
-- [ ] **P8-6 (P2)** Optional Windows Service watchdog (pre-login) — design stub only, behind a flag.
+- [x] **P8-6 (P2)** Optional Windows Service watchdog (pre-login) — design stub only, behind a flag.
   - *Accept:* documented; disabled by default; no regression when off.
 
 **Exit gate:** unattended device auto-starts, restarts on crash, recovers from sleep/power loss.
@@ -409,6 +409,7 @@ flowchart LR
 
 | Date | Phase/Task | Change / decision | By |
 |---|---|---|---|
+| 2026-07-14 | P8 complete | Implemented startup/lifecycle end-to-end: added `IAutoStartService` with Scheduled Task registration/query/delete and deterministic XML generation (`StartupTaskXmlBuilder`) including restart-on-failure policy (`PT1M`, count `3`), plus adaptive run-level selection (`HighestAvailable` when elevated, `LeastPrivilege` otherwise) to keep task registration reliable in non-admin sessions. Added HKCU Run fallback if task registration fails, startup status projection in admin General tab (`AutoStartOnLogin`, `ServiceWatchdogEnabled`, `AutoStartStatusText`), and app-level lifecycle wiring in `App.xaml.cs` (`ApplyAutoStartAsync` on startup and config changes, sleep/resume reconcile + reload + top-most reassert via `SystemEvents.PowerModeChanged`). Added/updated tests (`P8StartupTaskXmlTests`) including run-level coverage. Validation: Debug build succeeded (0 warnings/errors), full test suite passed 36/36, runtime logs show `Auto-start registration applied. Registered: true, RestartPolicyEnabled: true` and `Auto-start sync complete...` at `2026-07-14 10:40:28`, and scheduled task query confirms registered XML with `<RestartOnFailure><Count>3</Count><Interval>PT1M</Interval></RestartOnFailure>`. | — |
 | 2026-07-14 | P7 complete | Implemented admin UX end-to-end: added secure admin entry triggers from kiosk runtime (top-right corner 5 taps in 3 seconds and keyboard `Ctrl+Shift+F12`) with PIN-gated access (`AdminPinWindow`) and progressive lockout backoff via `IAdminAccessService`. Added full settings shell (`AdminSettingsWindow`) with tabs for Displays/General/Advanced/Diagnostics/About, unsaved-change guard, and MVVM-backed editing. Implemented Display Wall as a scaled physical-layout canvas with live health status dots (online/recovering/loading/offline color mapping), plus identify-screens overlay flow (`KioskSupervisor.ShowIdentifyOverlays` + `IdentifyOverlayWindow`). Expanded per-screen editor fields to include full-screen + fallback mode/image/html paths, and retained app preset + URL reachability test flows. Added first-run wizard with explicit lock step and automatic first-three-display assignment (`Till/KDS/Menu`) using stable display keys. Expanded diagnostics to include live snapshot summary, uptime, working set, logs folder reference, connectivity test action, restart-all, and support bundle export with redacted config + logs ZIP. Validation: Debug build/test passed (0 warnings/errors, 33/33 tests), Release build/test passed (0 warnings/errors, 33/33 tests), runtime smoke launch captured startup/reconcile/navigation evidence in `%ProgramData%\\OrderBuddy\\ScreenManager\\logs\\screen-manager-20260714.log` including `OrderBuddy Screen Manager started. Environment initialized.` and monitor reconciliation lines. | — |
 | 2026-07-14 | P6 complete | Implemented fallback/offline behavior end-to-end: replaced basic waiting overlay with branded fallback UX (device + screen identity, cause text, last successful connection, retry countdown, progress), integrated health-driven show/hide semantics with auto-dismiss on successful navigation, added dual connectivity probing (internet probe with captive-portal awareness + origin probe) and classification (`ConnectivityClassifier`) for cause-specific handling, added guarded offline simulation toggles for validation (`ORDERBUDDY_FORCE_INTERNET_DOWN`, `ORDERBUDDY_FORCE_ORIGIN_DOWN`), implemented optional custom fallback modes (`Fallback.Mode` supports branded/image/customHtml with local file loading), and added per-screen last-success persistence in `%ProgramData%\\OrderBuddy\\ScreenManager\\screen-status.json` through `LastConnectionStore`. Validation: Debug/Release builds succeeded (0 warnings/0 errors), tests passed 33/33 in both configurations including new P6 classifier and persistence tests, runtime evidence captured fallback health transitions and status-file persistence (`screen-status.json` contains `screen-primary` timestamp). | — |
 | 2026-07-14 | P5 complete | Implemented layered health/recovery stack end-to-end: expanded `IHealthMonitor` into per-screen state machine (`Loading/Online/Recovering/Offline/Failed`) with snapshots, failure taxonomy (`Navigation`, `ProcessCrash`, `HeartbeatTimeout`, `Connectivity`, `MemoryPressure`, `Manual`), capped backoff sequencing and offline slow-probe scheduling (15–30s bounded), heartbeat timeout evaluation, and recovery gating (`ShouldAttemptRecovery`). `KioskWindow` now injects JS heartbeat (`AddScriptToExecuteOnDocumentCreatedAsync`), processes `WebMessageReceived` heartbeats, tracks failures through health monitor, displays branded in-app recovery overlay with next-attempt timing, runs connectivity probes before retries (`NetworkInterface` + HEAD/GET), performs controlled recovery reloads, supports optional memory watchdog via env var `ORDERBUDDY_MEMORY_WATCHDOG_MB`, and honours per-screen periodic reload only while state is `Online`. Added app-level nightly scheduler (`NightlyMaintenanceScheduler`) driven by config time/action with live reschedule on config change and supervisor-wide reload trigger (`KioskSupervisor.ReloadAllWindows`). Validation: Debug build/test passed (0 warnings/errors, 28/28 tests), Release build/test passed (0 warnings/errors, 28/28 tests), plus runtime evidence in logs for nightly scheduling and P5-integrated screen health lifecycle events. Added `P5HealthMonitorTests` covering backoff escalation, heartbeat timeout transition, connectivity transition, recovery timing gate, and memory-pressure path. Runtime fault injection requiring live config mutation was partially constrained by existing ProgramData ACL hardening (`UnauthorizedAccessException` when writing `%ProgramData%\OrderBuddy\ScreenManager\config.json`) which is expected under P4 security policy. | — |

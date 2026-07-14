@@ -163,8 +163,22 @@
 
             <TabItem Header="General">
                 <StackPanel Margin="14">
-                    <TextBlock Text="General settings are loaded from config and applied live." FontSize="16"/>
-                    <TextBlock Text="Use Save to persist changes." Margin="0,8,0,0"/>
+                    <TextBlock Text="Startup and lifecycle" FontSize="18" FontWeight="SemiBold"/>
+                    <CheckBox Content="Auto-start on Windows logon (Scheduled Task)"
+                              IsChecked="{Binding AutoStartOnLogin}"
+                              Margin="0,10,0,0"
+                              Checked="MarkDirty_Toggled"
+                              Unchecked="MarkDirty_Toggled"/>
+                    <CheckBox Content="Enable Windows Service watchdog (design stub; no-op in P8)"
+                              IsChecked="{Binding ServiceWatchdogEnabled}"
+                              Margin="0,8,0,0"
+                              Checked="MarkDirty_Toggled"
+                              Unchecked="MarkDirty_Toggled"/>
+                    <TextBlock Text="{Binding AutoStartStatusText}"
+                               TextWrapping="Wrap"
+                               Foreground="#9ED0FF"
+                               Margin="0,10,0,0"/>
+                    <TextBlock Text="Use Save to apply and persist startup settings." Margin="0,10,0,0"/>
                 </StackPanel>
             </TabItem>
             <TabItem Header="Advanced">

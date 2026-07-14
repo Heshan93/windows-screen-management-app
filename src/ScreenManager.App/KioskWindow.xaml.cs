@@ -137,6 +137,16 @@ public partial class KioskWindow : Window
         });
     }
 
+    public void ReassertTopmost()
+    {
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            Topmost = false;
+            Topmost = true;
+            Activate();
+        });
+    }
+
     public void ApplyBinding(ScreenConfig screen, DisplayInfo display)
     {
         _activeScreen = screen;

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using OrderBuddy.ScreenManager.App.Lifecycle;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using OrderBuddy.ScreenManager.Core.Health;
@@ -27,10 +28,14 @@ public sealed class AdminSettingsViewModel : ObservableObject
     private readonly IDisplayManager _displayManager;
     private readonly IHealthMonitor _healthMonitor;
     private readonly KioskSupervisor _kioskSupervisor;
+    private readonly IAutoStartService _autoStartService;
 
     private bool _hasUnsavedChanges;
     private string _diagnosticsText = string.Empty;
     private string _testUrlResult = string.Empty;
+    private string _autoStartStatusText = string.Empty;
+    private bool _autoStartOnLogin;
+    private bool _serviceWatchdogEnabled;
     private AdminScreenItemViewModel? _selectedScreen;
 
     public ObservableCollection<AdminScreenItemViewModel> Screens { get; } = [];
@@ -39,18 +44,23 @@ public sealed class AdminSettingsViewModel : ObservableObject
     public bool HasUnsavedChanges { get => _hasUnsavedChanges; set => SetProperty(ref _hasUnsavedChanges, value); }
     public string DiagnosticsText { get => _diagnosticsText; set => SetProperty(ref _diagnosticsText, value); }
     public string TestUrlResult { get => _testUrlResult; set => SetProperty(ref _testUrlResult, value); }
+    public string AutoStartStatusText { get => _autoStartStatusText; set => SetProperty(ref _autoStartStatusText, value); }
+    public bool AutoStartOnLogin { get => _autoStartOnLogin; set => SetProperty(ref _autoStartOnLogin, value); }
+    public bool ServiceWatchdogEnabled { get => _serviceWatchdogEnabled; set => SetProperty(ref _serviceWatchdogEnabled, value); }
     public AdminScreenItemViewModel? SelectedScreen { get => _selectedScreen; set => SetProperty(ref _selectedScreen, value); }
 
     public AdminSettingsViewModel(
         IConfigService configService,
         IDisplayManager displayManager,
         IHealthMonitor healthMonitor,
-        KioskSupervisor kioskSupervisor)
+        KioskSupervisor kioskSupervisor,
+        IAutoStartService autoStartService)
     {
         _configService = configService;
         _displayManager = displayManager;
         _healthMonitor = healthMonitor;
         _kioskSupervisor = kioskSupervisor;
+        _autoStartService = autoStartService;
 
         ReloadFromConfig();
     }
@@ -64,8 +74,11 @@ public sealed class AdminSettingsViewModel : ObservableObject
         }
 
         SelectedScreen = Screens.FirstOrDefault();
+        AutoStartOnLogin = _configService.CurrentConfig.General.AutoStartOnLogin;
+        ServiceWatchdogEnabled = _configService.CurrentConfig.General.ServiceWatchdogEnabled;
         RefreshDisplayTiles();
         RefreshDiagnostics();
+        _ = RefreshAutoStartStatusAsync();
         HasUnsavedChanges = false;
     }
 
@@ -81,9 +94,33 @@ public sealed class AdminSettingsViewModel : ObservableObject
         }).ToList();
 
         var final = current with { Screens = remapped };
+        final = final with
+        {
+            General = final.General with
+            {
+                AutoStartOnLogin = AutoStartOnLogin,
+                ServiceWatchdogEnabled = ServiceWatchdogEnabled
+            }
+        };
+
         await _configService.SaveAsync(final, cancellationToken);
         HasUnsavedChanges = false;
         RefreshDiagnostics();
+        await RefreshAutoStartStatusAsync(cancellationToken);
+    }
+
+    public async Task RefreshAutoStartStatusAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var status = await _autoStartService.GetStatusAsync(cancellationToken);
+            AutoStartStatusText =
+                $"Auto-start task: {(status.IsRegistered ? "registered" : "not registered")}, restart policy: {(status.RestartPolicyEnabled ? "enabled" : "missing")}. {status.Detail}";
+        }
+        catch (Exception ex)
+        {
+            AutoStartStatusText = $"Auto-start status unavailable: {ex.Message}";
+        }
     }
 
     public async Task<string> TestSelectedUrlAsync()
@@ -215,7 +252,9 @@ public sealed class AdminSettingsViewModel : ObservableObject
         var scale = Math.Min(scaleX, scaleY);
 
         var snapshots = _healthMonitor.GetSnapshots().ToDictionary(s => s.ScreenId, StringComparer.OrdinalIgnoreCase);
-        var configScreens = _configService.CurrentConfig.Screens.ToDictionary(s => s.DisplayKey, StringComparer.OrdinalIgnoreCase);
+        var configScreens = _configService.CurrentConfig.Screens
+            .GroupBy(s => s.DisplayKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var display in displays)
         {

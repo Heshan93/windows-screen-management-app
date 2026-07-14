@@ -2,10 +2,12 @@
 using System.Text.Json;
 using System.Threading;
 using System.Windows;
+using Microsoft.Win32;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using OrderBuddy.ScreenManager.App.Browser;
 using OrderBuddy.ScreenManager.App.Display;
+using OrderBuddy.ScreenManager.App.Lifecycle;
 using OrderBuddy.ScreenManager.App.Security;
 using OrderBuddy.ScreenManager.App.Status;
 using OrderBuddy.ScreenManager.Core.Config;
@@ -28,6 +30,7 @@ public partial class App : System.Windows.Application
 	private IKeyboardLockService? _keyboardLockService;
 	private IConfigService? _configService;
 	private INightlyMaintenanceScheduler? _nightlyMaintenanceScheduler;
+	private IAutoStartService? _autoStartService;
 
 	protected override async void OnStartup(StartupEventArgs e)
 	{
@@ -60,6 +63,7 @@ public partial class App : System.Windows.Application
 				services.AddSingleton<IHealthMonitor, PlaceholderHealthMonitor>();
 				services.AddSingleton<IKeyboardLockService, WindowsKeyboardLockService>();
 				services.AddSingleton<IAdminAccessService, AdminAccessService>();
+				services.AddSingleton<IAutoStartService, WindowsAutoStartService>();
 				services.AddSingleton<ILastConnectionStore, LastConnectionStore>();
 				services.AddSingleton<Serilog.ILogger>(Log.Logger);
 				services.AddSingleton<KioskSupervisor>();
@@ -75,6 +79,7 @@ public partial class App : System.Windows.Application
 
 		_configService = _host.Services.GetRequiredService<IConfigService>();
 		_keyboardLockService = _host.Services.GetRequiredService<IKeyboardLockService>();
+		_autoStartService = _host.Services.GetRequiredService<IAutoStartService>();
 		var healthMonitor = _host.Services.GetRequiredService<IHealthMonitor>();
 		healthMonitor.ApplySettings(
 			_configService.CurrentConfig.General.RetryBackoffSec,
@@ -83,17 +88,26 @@ public partial class App : System.Windows.Application
 
 		ApplyKeyboardLock(_configService.CurrentConfig.General.LockSystemKeys);
 		_configService.ConfigChanged += OnConfigChanged;
+		SystemEvents.PowerModeChanged += OnPowerModeChanged;
+
+		if (_configService.CurrentConfig.General.ServiceWatchdogEnabled)
+		{
+			Log.Warning("ServiceWatchdogEnabled is on, but Windows Service watchdog is design-stub only in P8 and remains disabled.");
+		}
 
 		_supervisor = _host.Services.GetRequiredService<KioskSupervisor>();
 		_nightlyMaintenanceScheduler = _host.Services.GetRequiredService<INightlyMaintenanceScheduler>();
 		_supervisor.Start();
 		_nightlyMaintenanceScheduler.Start();
+
+		await ApplyAutoStartAsync(_configService.CurrentConfig);
 		Log.Information("OrderBuddy Screen Manager started. Environment initialized.");
 	}
 
 	private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
 	{
 		ApplyKeyboardLock(e.NewConfig.General.LockSystemKeys);
+		_ = ApplyAutoStartAsync(e.NewConfig);
 
 		if (_host is not null)
 		{
@@ -103,6 +117,46 @@ public partial class App : System.Windows.Application
 				e.NewConfig.General.OfflineTimeoutSec,
 				e.NewConfig.General.OfflineTimeoutSec);
 		}
+	}
+
+	private async Task ApplyAutoStartAsync(AppConfig config)
+	{
+		if (_autoStartService is null)
+		{
+			return;
+		}
+
+		try
+		{
+			var status = await _autoStartService.ApplyAsync(config);
+			Log.Information(
+				"Auto-start sync complete. EnabledByConfig: {EnabledByConfig}, Registered: {Registered}, RestartPolicyEnabled: {RestartPolicyEnabled}, Detail: {Detail}",
+				status.EnabledByConfig,
+				status.IsRegistered,
+				status.RestartPolicyEnabled,
+				status.Detail);
+		}
+		catch (Exception ex)
+		{
+			Log.Warning(ex, "Auto-start sync failed.");
+		}
+	}
+
+	private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+	{
+		if (e.Mode != PowerModes.Resume || _supervisor is null)
+		{
+			return;
+		}
+
+		Dispatcher.Invoke(() =>
+		{
+			_supervisor.ReconcileNow("system-resume");
+			_supervisor.ReloadAllWindows("system-resume");
+			_supervisor.ReassertTopmostWindows("system-resume");
+		});
+
+		Log.Information("System resume handled: displays revalidated, screens reloaded, top-most state reasserted.");
 	}
 
 	private void ApplyKeyboardLock(bool enabled)
@@ -127,6 +181,8 @@ public partial class App : System.Windows.Application
 		{
 			_configService.ConfigChanged -= OnConfigChanged;
 		}
+
+		SystemEvents.PowerModeChanged -= OnPowerModeChanged;
 
 		_keyboardLockService?.Stop();
 		_nightlyMaintenanceScheduler?.Stop();

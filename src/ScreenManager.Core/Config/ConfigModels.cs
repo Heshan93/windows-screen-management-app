@@ -35,6 +35,7 @@ public sealed record DeviceInfo
 public sealed record GeneralSettings
 {
     public bool AutoStartOnLogin { get; init; } = true;
+    public bool ServiceWatchdogEnabled { get; init; } = false;
     public bool AutoReconnect { get; init; } = true;
     public bool LockSystemKeys { get; init; } = false;
     public List<int> RetryBackoffSec { get; init; } = [5, 10, 30, 60];

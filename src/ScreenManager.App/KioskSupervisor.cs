@@ -36,6 +36,11 @@ public sealed class KioskSupervisor : IDisposable
         ReconcileWindows("initial-start");
     }
 
+    public void ReconcileNow(string reason)
+    {
+        ReconcileWindows(reason);
+    }
+
     public void ReloadAllWindows(string reason)
     {
         if (_disposed)
@@ -47,6 +52,20 @@ public sealed class KioskSupervisor : IDisposable
         {
             window.RequestReload(reason);
             _logger.Information("Requested reload for screen {ScreenId}. Reason: {Reason}", screenId, reason);
+        }
+    }
+
+    public void ReassertTopmostWindows(string reason)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        foreach (var (screenId, window) in _windows)
+        {
+            window.ReassertTopmost();
+            _logger.Information("Reasserted top-most state for screen {ScreenId}. Reason: {Reason}", screenId, reason);
         }
     }
 
