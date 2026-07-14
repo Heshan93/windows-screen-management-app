@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using System.Windows.Threading;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using Serilog;
@@ -47,6 +48,35 @@ public sealed class KioskSupervisor : IDisposable
             window.RequestReload(reason);
             _logger.Information("Requested reload for screen {ScreenId}. Reason: {Reason}", screenId, reason);
         }
+    }
+
+    public void ShowIdentifyOverlays()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        var overlays = new List<IdentifyOverlayWindow>();
+        var displays = _displayManager.Enumerate().OrderBy(d => d.X).ThenBy(d => d.Y).ToList();
+
+        for (var i = 0; i < displays.Count; i++)
+        {
+            var overlay = ActivatorUtilities.CreateInstance<IdentifyOverlayWindow>(_services, displays[i], i + 1);
+            overlays.Add(overlay);
+            overlay.Show();
+        }
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            foreach (var overlay in overlays)
+            {
+                overlay.Close();
+            }
+        };
+        timer.Start();
     }
 
     private void OnDisplaysChanged(object? sender, DisplaysChangedEventArgs e)

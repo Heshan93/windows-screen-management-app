@@ -5,12 +5,15 @@ using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using OrderBuddy.ScreenManager.App.Browser;
+using OrderBuddy.ScreenManager.App.Security;
 using OrderBuddy.ScreenManager.App.Status;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
@@ -37,6 +40,8 @@ public partial class KioskWindow : Window
     private readonly IHealthMonitor _healthMonitor;
     private readonly ISystemClock _clock;
     private readonly ILastConnectionStore _lastConnectionStore;
+    private readonly IAdminAccessService _adminAccessService;
+    private readonly IServiceProvider _services;
     private readonly Stopwatch _coldStartStopwatch = new();
     private readonly DispatcherTimer _healthTickTimer;
     private readonly DispatcherTimer _reloadIntervalTimer;
@@ -53,6 +58,7 @@ public partial class KioskWindow : Window
     private ConnectivityFailureCause _lastFailureCause = ConnectivityFailureCause.Unknown;
     private DateTimeOffset? _lastSuccessfulConnectionUtc;
     private int _memoryWatchdogThresholdMb;
+    private readonly Queue<DateTimeOffset> _cornerTapHistory = new();
 
     public KioskWindow(
         KioskBrowserOptions browserOptions,
@@ -62,7 +68,9 @@ public partial class KioskWindow : Window
         IDisplayManager displayManager,
         IHealthMonitor healthMonitor,
         ISystemClock clock,
-        ILastConnectionStore lastConnectionStore)
+        ILastConnectionStore lastConnectionStore,
+        IAdminAccessService adminAccessService,
+        IServiceProvider services)
     {
         _browserOptions = browserOptions;
         _environmentProvider = environmentProvider;
@@ -71,6 +79,8 @@ public partial class KioskWindow : Window
         _healthMonitor = healthMonitor;
         _clock = clock;
         _lastConnectionStore = lastConnectionStore;
+        _adminAccessService = adminAccessService;
+        _services = services;
 
         // Keep these dependencies in the constructor to prove P0 DI contracts remain valid.
         _ = displayManager;
@@ -96,6 +106,8 @@ public partial class KioskWindow : Window
         Loaded += OnLoaded;
         Closed += OnClosed;
         Closing += OnClosing;
+        PreviewKeyDown += OnPreviewKeyDown;
+        MouseLeftButtonDown += OnMouseLeftButtonDown;
     }
 
     public void RequestClose()
@@ -896,12 +908,68 @@ public partial class KioskWindow : Window
         _logger.Warning("Blocked manual close attempt for kiosk window.");
     }
 
+    private async void OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.F12 &&
+            (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control &&
+            (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)
+        {
+            e.Handled = true;
+            await OpenAdminSettingsAsync("keyboard-shortcut");
+        }
+    }
+
+    private async void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var point = e.GetPosition(this);
+        var inTopRight = point.X >= ActualWidth - 120 && point.Y <= 120;
+        if (!inTopRight)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        _cornerTapHistory.Enqueue(now);
+        while (_cornerTapHistory.Count > 0 && (now - _cornerTapHistory.Peek()).TotalSeconds > 3)
+        {
+            _cornerTapHistory.Dequeue();
+        }
+
+        if (_cornerTapHistory.Count >= 5)
+        {
+            _cornerTapHistory.Clear();
+            await OpenAdminSettingsAsync("corner-gesture");
+        }
+    }
+
+    private Task OpenAdminSettingsAsync(string trigger)
+    {
+        return Dispatcher.InvokeAsync(() =>
+        {
+            var pinWindow = ActivatorUtilities.CreateInstance<AdminPinWindow>(_services);
+            pinWindow.Owner = this;
+            var unlocked = pinWindow.ShowDialog() == true;
+            if (!unlocked)
+            {
+                _logger.Warning("Admin access denied. Trigger: {Trigger}", trigger);
+                return;
+            }
+
+            var settingsWindow = ActivatorUtilities.CreateInstance<AdminSettingsWindow>(_services);
+            settingsWindow.Owner = this;
+            settingsWindow.ShowDialog();
+            _logger.Information("Admin settings closed. Trigger: {Trigger}", trigger);
+        }).Task;
+    }
+
     private void OnClosed(object? sender, EventArgs e)
     {
         _healthTickTimer.Stop();
         _reloadIntervalTimer.Stop();
         _connectivityClient.Dispose();
         _configService.ConfigChanged -= OnConfigChanged;
+        PreviewKeyDown -= OnPreviewKeyDown;
+        MouseLeftButtonDown -= OnMouseLeftButtonDown;
         CleanupWebView();
     }
 
