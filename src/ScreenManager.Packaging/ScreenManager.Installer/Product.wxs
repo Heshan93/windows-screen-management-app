@@ -1,0 +1,53 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="OrderBuddy Screen Manager"
+    Manufacturer="OrderBuddy"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="08A3352E-450C-42B2-B7A1-4C196B4D73A7"
+    Scope="perMachine"
+    InstallerVersion="500"
+    Language="1033"
+    Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of OrderBuddy Screen Manager is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="OrderBuddy\ScreenManager" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="ORDERBUDDYDIR" Name="OrderBuddy">
+        <Directory Id="SCREENMANAGERDATADIR" Name="ScreenManager" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="OrderBuddy Screen Manager" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="AutoStartRunKey" />
+      <ComponentRef Id="ProgramDataFolder" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <Component Id="AutoStartRunKey" Directory="INSTALLFOLDER" Guid="47DA5E98-883C-4347-BD06-B6A0731B0A3F">
+      <RegistryValue
+        Root="HKLM"
+        Key="Software\Microsoft\Windows\CurrentVersion\Run"
+        Name="OrderBuddy.ScreenManager.v2"
+        Type="string"
+        Value="&quot;[INSTALLFOLDER]ScreenManager.App.exe&quot;"
+        KeyPath="yes" />
+    </Component>
+
+    <Component Id="ProgramDataFolder" Directory="SCREENMANAGERDATADIR" Guid="28145702-B0F7-4A12-B160-6867E45A5D3C">
+      <CreateFolder />
+    </Component>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)**" />
+    </ComponentGroup>
+  </Fragment>
+</Wix>

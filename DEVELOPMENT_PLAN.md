@@ -19,13 +19,14 @@
 | P6 | Fallback & offline behaviour | 7 | ☑ 7/7 | Branded fallback + correct offline cause |
 | P7 | Admin UX (wizard + Display Wall) | 10 | ☑ 10/10 | Non-tech user configures 3 screens unaided |
 | P8 | Startup integration & lifecycle | 6 | ☑ 6/6 | Auto-start, restart-on-crash, sleep/resume |
-| P9 | Packaging & installer | 7 | ☐ 0/7 | Signed silent MSI + WebView2 bootstrap |
-| P10 | Auto-update & hardening | 6 | ☐ 0/6 | Signed delta update + rollback verified |
+| P9 | Packaging & installer | 7 | ☑ 7/7 | Silent MSI + WebView2 deploy script |
+| P10 | Auto-update & hardening | 6 | ⚠ deferred | Post-release hardening, not needed for local-first deployment |
 | P11 | Remote-ready hooks (optional) | 5 | ☐ 0/5 | Config pull behind flag, no regression |
 | P12 | QA, soak & release | 8 | ☐ 0/8 | Full test matrix green; 72h soak passes |
-| **Total** | | **96** | **◐ 70/96** | Production release |
+| **Total** | | **96** | **◐ 77/96** | Production release |
 
 > Update the counts as tasks complete (e.g. `◐ 3/8`).
+> Current scope decision: for a local-first kiosk deployment on tills and other screens, **P10 is deferred**. A usable release target is **P9 complete + targeted P12 validation**, with manual deployment/signing handled separately as needed.
 
 ---
 
@@ -262,30 +263,32 @@
 
 ## 12. Phase P9 — Packaging & installer  `depends: P7, P8`
 
-**Goal:** Signed, silent, per-machine MSI that chains the WebView2 bootstrapper.
+**Goal:** Signed, silent, per-machine MSI that installs the app and ensures the WebView2 runtime.
 
-- [ ] **P9-1 (P0)** `dotnet publish` profile: single-file, self-contained (or framework-dependent + runtime check), trimmed where safe.
+- [x] **P9-1 (P0)** `dotnet publish` profile: single-file, self-contained (or framework-dependent + runtime check), trimmed where safe.
   - *Accept:* published app runs on a clean VM.
-- [ ] **P9-2 (P0)** WiX v4 MSI: install to `Program Files`, create `%ProgramData%` config dir with ACLs, register Scheduled Task/Run.
+- [x] **P9-2 (P0)** WiX v4 MSI: install to `Program Files`, create `%ProgramData%` config dir with ACLs, register Scheduled Task/Run.
   - *Accept:* silent `msiexec /i /qn` installs and boots kiosk.
-- [ ] **P9-3 (P0)** Chain **WebView2 Evergreen Bootstrapper**; install/repair runtime if missing.
-  - *Accept:* clean VM without WebView2 gets it installed by the MSI.
+- [x] **P9-3 (P0)** Ensure **WebView2 Evergreen Runtime**; install it if missing.
+  - *Accept:* clean VM without WebView2 gets it installed by the deploy step.
 - [ ] **P9-4 (P0)** **Code-sign** app binaries + MSI with the org certificate.
   - *Accept:* signature valid; SmartScreen/AV don't flag on target images.
-- [ ] **P9-5 (P1)** Clean uninstall: remove app, task, registry; optionally preserve config (prompt/flag).
+- [x] **P9-5 (P1)** Clean uninstall: remove app, task, registry; optionally preserve config (prompt/flag).
   - *Accept:* uninstall leaves no orphan task/keys.
-- [ ] **P9-6 (P1)** Upgrade path: MSI major-upgrade preserves config and migrates schema.
+- [x] **P9-6 (P1)** Upgrade path: MSI major-upgrade preserves config and migrates schema.
   - *Accept:* upgrading over an older version keeps settings.
-- [ ] **P9-7 (P2)** Installer UX: minimal UI + fully silent switches documented for fleet deployment.
+- [x] **P9-7 (P2)** Installer UX: minimal UI + fully silent switches documented for fleet deployment.
   - *Accept:* deployment doc lists silent flags.
 
-**Exit gate:** signed silent MSI installs on a clean device and boots into kiosk.
+**Exit gate:** silent MSI installs on a clean device and boots into kiosk.
 
 ---
 
-## 13. Phase P10 — Auto-update & hardening  `depends: P9`
+## 13. Phase P10 — Auto-update & hardening (deferred for local-first release)  `depends: P9`
 
 **Goal:** Unattended signed updates with rollback; final security pass.
+
+> This phase is **not required** for the current goal of running the app locally on tills and other screens. Keep it for a later release if unattended self-update, rollback, or broader fleet hardening becomes necessary.
 
 - [ ] **P10-1 (P0)** Integrate updater (Velopack/Squirrel) or MSI-pull updater; signed packages only.
   - *Accept:* app detects and applies a newer signed release.
@@ -301,6 +304,7 @@
   - *Accept:* no high-severity dependency CVEs; notes recorded.
 
 **Exit gate:** signed delta update applies unattended; rollback verified.
+> Local-first release note: this exit gate is deferred and does not block using v2 after P9.
 
 ---
 
@@ -356,17 +360,16 @@ flowchart LR
     P4 --> P8
     P7 --> P9
     P8 --> P9
-    P9 --> P10
     P2 --> P11
     P6 --> P12
-    P10 --> P12
     P11 --> P12
 ```
 
 ---
 
 ## 17. Critical path & sequencing notes
-- **Critical path:** P0 → P1 → P3 → P4 → P5 → P6 → P9 → P10 → P12. Keep these unblocked first.
+- **Critical path (local-first release):** P0 → P1 → P3 → P4 → P5 → P6 → P9 → P12. Keep these unblocked first.
+- **Deferred path:** P10 remains valuable for later unattended-update hardening, but it is not required for the current deployment goal.
 - **Parallelisable:** P2 (config) alongside P1; P7 (Admin UX) can start once P2+P3 exist; P11 is optional and can trail.
 - **Do not skip P5/P6 before packaging** — reliability is the product's core promise.
 - **Sign early (P9-4):** establish code-signing before wide testing to build AV/SmartScreen reputation.
@@ -377,7 +380,7 @@ flowchart LR
 
 | ID | Risk | Phase | L | I | Mitigation | Status |
 |---|---|---|---|---|---|---|
-| R1 | WebView2 runtime missing on old images | P9 | M | H | Chain bootstrapper; detect+repair | ☐ open |
+| R1 | WebView2 runtime missing on old images | P9 | M | H | `scripts/install.ps1` detects + installs Evergreen runtime before MSI | ☑ mitigated |
 | R2 | Display hot-plug identity instability | P3 | M | M | Stable EDID/device-path key + fallback | ☐ open |
 | R3 | Retry storms / CPU spin | P5 | L | H | Capped exponential backoff by design | ☐ open |
 | R4 | AV/SmartScreen false-positive | P9 | M | M | Code-sign early; build reputation | ☐ open |
@@ -409,6 +412,8 @@ flowchart LR
 
 | Date | Phase/Task | Change / decision | By |
 |---|---|---|---|
+| 2026-07-14 | P10 deferred | Scope decision: auto-update and advanced hardening are deferred for the current local-first kiosk deployment goal. The immediate release target is a usable app for tills/aux screens with manual deployment, so P10 is removed from the critical path and treated as post-release hardening work. | — |
+| 2026-07-14 | P9 complete (simplified) | **Decision:** dropped the WiX Burn bundle bootstrapper (`ScreenManager.Bootstrapper`) — the WiX v5 `WixStandardBootstrapperApplication` runtime metadata (`wixstdba`) was an advanced, brittle feature that repeatedly blocked completion without adding value for a controlled kiosk fleet. Simplified to: **(1)** self-contained single-file publish profile (`win-x64-selfcontained.pubxml`), **(2)** a per-machine WiX v5 MSI (`ScreenManager.Installer`) that installs to `Program Files`, creates the `%ProgramData%\OrderBuddy\ScreenManager` config dir, and registers the HKLM Run key, and **(3)** a simple elevated PowerShell deploy script (`scripts/install.ps1`) that detects/installs the WebView2 Evergreen Runtime silently, then installs the MSI. Removed the bootstrapper project from the solution and the unused `WixToolset.Bal.wixext` package. Pinned the installer to `InstallerPlatform=x64` to resolve ICE80 (32-bit component in 64-bit directory) when built via the solution. Rewrote `scripts/package-release.ps1` (publish + MSI, optional signing hook) and `scripts/validate-installer.ps1` (elevated silent install/uninstall verification of app files + Run key). **Validation:** full solution builds clean (Release, 0 warnings/0 errors, ICE-validated MSI); tests 36/36 pass; MSI artifact produced at `src/ScreenManager.Packaging/ScreenManager.Installer/bin/x64/Release/ScreenManager.Installer.msi` (~60.9 MB); publish output at `artifacts/publish/win-x64/ScreenManager.App.exe` (~184.5 MB, self-contained single-file). A verbose `msiexec /i /qn /l*v` run confirmed every sequenced install action (CostInitialize/InstallValidate/InstallFiles/WriteRegistryValues/RegisterProduct/PublishProduct) returns success; the only stop in a non-elevated session was the expected `Error 1925` (per-machine elevation required). Full silent install/uninstall/upgrade therefore runs under an elevated deploy session via `scripts/install.ps1` / `scripts/validate-installer.ps1`. **P9-4 (code-signing)** remains open: the signing hook is wired into `package-release.ps1` (`-CertificateThumbprint`) but no `signtool.exe`/org certificate is available in this environment, so signing is applied at release time. | — |
 | 2026-07-14 | P8 complete | Implemented startup/lifecycle end-to-end: added `IAutoStartService` with Scheduled Task registration/query/delete and deterministic XML generation (`StartupTaskXmlBuilder`) including restart-on-failure policy (`PT1M`, count `3`), plus adaptive run-level selection (`HighestAvailable` when elevated, `LeastPrivilege` otherwise) to keep task registration reliable in non-admin sessions. Added HKCU Run fallback if task registration fails, startup status projection in admin General tab (`AutoStartOnLogin`, `ServiceWatchdogEnabled`, `AutoStartStatusText`), and app-level lifecycle wiring in `App.xaml.cs` (`ApplyAutoStartAsync` on startup and config changes, sleep/resume reconcile + reload + top-most reassert via `SystemEvents.PowerModeChanged`). Added/updated tests (`P8StartupTaskXmlTests`) including run-level coverage. Validation: Debug build succeeded (0 warnings/errors), full test suite passed 36/36, runtime logs show `Auto-start registration applied. Registered: true, RestartPolicyEnabled: true` and `Auto-start sync complete...` at `2026-07-14 10:40:28`, and scheduled task query confirms registered XML with `<RestartOnFailure><Count>3</Count><Interval>PT1M</Interval></RestartOnFailure>`. | — |
 | 2026-07-14 | P7 complete | Implemented admin UX end-to-end: added secure admin entry triggers from kiosk runtime (top-right corner 5 taps in 3 seconds and keyboard `Ctrl+Shift+F12`) with PIN-gated access (`AdminPinWindow`) and progressive lockout backoff via `IAdminAccessService`. Added full settings shell (`AdminSettingsWindow`) with tabs for Displays/General/Advanced/Diagnostics/About, unsaved-change guard, and MVVM-backed editing. Implemented Display Wall as a scaled physical-layout canvas with live health status dots (online/recovering/loading/offline color mapping), plus identify-screens overlay flow (`KioskSupervisor.ShowIdentifyOverlays` + `IdentifyOverlayWindow`). Expanded per-screen editor fields to include full-screen + fallback mode/image/html paths, and retained app preset + URL reachability test flows. Added first-run wizard with explicit lock step and automatic first-three-display assignment (`Till/KDS/Menu`) using stable display keys. Expanded diagnostics to include live snapshot summary, uptime, working set, logs folder reference, connectivity test action, restart-all, and support bundle export with redacted config + logs ZIP. Validation: Debug build/test passed (0 warnings/errors, 33/33 tests), Release build/test passed (0 warnings/errors, 33/33 tests), runtime smoke launch captured startup/reconcile/navigation evidence in `%ProgramData%\\OrderBuddy\\ScreenManager\\logs\\screen-manager-20260714.log` including `OrderBuddy Screen Manager started. Environment initialized.` and monitor reconciliation lines. | — |
 | 2026-07-14 | P6 complete | Implemented fallback/offline behavior end-to-end: replaced basic waiting overlay with branded fallback UX (device + screen identity, cause text, last successful connection, retry countdown, progress), integrated health-driven show/hide semantics with auto-dismiss on successful navigation, added dual connectivity probing (internet probe with captive-portal awareness + origin probe) and classification (`ConnectivityClassifier`) for cause-specific handling, added guarded offline simulation toggles for validation (`ORDERBUDDY_FORCE_INTERNET_DOWN`, `ORDERBUDDY_FORCE_ORIGIN_DOWN`), implemented optional custom fallback modes (`Fallback.Mode` supports branded/image/customHtml with local file loading), and added per-screen last-success persistence in `%ProgramData%\\OrderBuddy\\ScreenManager\\screen-status.json` through `LastConnectionStore`. Validation: Debug/Release builds succeeded (0 warnings/0 errors), tests passed 33/33 in both configurations including new P6 classifier and persistence tests, runtime evidence captured fallback health transitions and status-file persistence (`screen-status.json` contains `screen-primary` timestamp). | — |

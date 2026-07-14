@@ -1,0 +1,17 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <PublishDir>$(MSBuildThisFileDirectory)..\..\..\artifacts\publish\win-x64\</PublishDir>
+    <DefineConstants>PublishDir=$(PublishDir);ProductVersion=$(Version)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" />
+  </ItemGroup>
+
+  <Target Name="EnsurePublishOutput" BeforeTargets="Build">
+    <Error Condition="!Exists('$(PublishDir)ScreenManager.App.exe')" Text="Publish output was not found at $(PublishDir). Run dotnet publish with the win-x64-selfcontained profile first." />
+  </Target>
+</Project>

@@ -13,6 +13,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenManager.Tests", "test
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenManager.App", "src\ScreenManager.App\ScreenManager.App.csproj", "{8F7B5E4E-FEBE-4B3C-84AA-7F22B04BEB98}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ScreenManager.Packaging", "ScreenManager.Packaging", "{831DCD4D-A3FB-4CE3-864D-62AE16169531}"
+EndProject
+Project("{B7DD6F7E-DEF8-4E67-B5B7-07EF123DB6F0}") = "ScreenManager.Installer", "src\ScreenManager.Packaging\ScreenManager.Installer\ScreenManager.Installer.csproj", "{B2F2C0F9-F50F-4867-802D-33F04D09A8EC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -34,10 +38,16 @@ Global
 		{8F7B5E4E-FEBE-4B3C-84AA-7F22B04BEB98}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8F7B5E4E-FEBE-4B3C-84AA-7F22B04BEB98}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8F7B5E4E-FEBE-4B3C-84AA-7F22B04BEB98}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B2F2C0F9-F50F-4867-802D-33F04D09A8EC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2F2C0F9-F50F-4867-802D-33F04D09A8EC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2F2C0F9-F50F-4867-802D-33F04D09A8EC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2F2C0F9-F50F-4867-802D-33F04D09A8EC}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{B5F63E5F-3B03-4D11-A8A6-C5B0DADF1DF1} = {E00F5193-C3A2-40E0-B75E-F61208FBF66A}
 		{6CD9BE9F-7586-4B61-A13E-04220EF06C8F} = {273EDA2B-0E41-418D-938F-A5D33249F07C}
 		{8F7B5E4E-FEBE-4B3C-84AA-7F22B04BEB98} = {E00F5193-C3A2-40E0-B75E-F61208FBF66A}
+		{831DCD4D-A3FB-4CE3-864D-62AE16169531} = {E00F5193-C3A2-40E0-B75E-F61208FBF66A}
+		{B2F2C0F9-F50F-4867-802D-33F04D09A8EC} = {831DCD4D-A3FB-4CE3-864D-62AE16169531}
 	EndGlobalSection
 EndGlobal

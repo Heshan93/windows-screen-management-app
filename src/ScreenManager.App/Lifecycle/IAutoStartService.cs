@@ -145,7 +145,10 @@ public sealed class WindowsAutoStartService : IAutoStartService
 
         if (processPath.EndsWith("dotnet.exe", StringComparison.OrdinalIgnoreCase))
         {
-            var assemblyPath = typeof(App).Assembly.Location;
+            var assemblyName = typeof(App).Assembly.GetName().Name;
+            var assemblyPath = string.IsNullOrWhiteSpace(assemblyName)
+                ? string.Empty
+                : Path.Combine(AppContext.BaseDirectory, $"{assemblyName}.dll");
             if (string.IsNullOrWhiteSpace(assemblyPath))
             {
                 return (string.Empty, string.Empty);
