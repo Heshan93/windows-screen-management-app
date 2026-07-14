@@ -65,6 +65,22 @@ public sealed class AdminSettingsViewModel : ObservableObject
         ReloadFromConfig();
     }
 
+    private static string NormalizeUrlInput(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return string.Empty;
+        }
+
+        var value = raw.Trim();
+        if (value.Contains("://", StringComparison.Ordinal))
+        {
+            return value;
+        }
+
+        return "https://" + value;
+    }
+
     public void ReloadFromConfig()
     {
         Screens.Clear();
@@ -86,6 +102,11 @@ public sealed class AdminSettingsViewModel : ObservableObject
 
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
+        foreach (var screen in Screens)
+        {
+            screen.Url = NormalizeUrlInput(screen.Url);
+        }
+
         var current = _configService.CurrentConfig;
         var remapped = current.Screens.Select(existing =>
         {
@@ -131,7 +152,10 @@ public sealed class AdminSettingsViewModel : ObservableObject
             return TestUrlResult;
         }
 
-        if (!Uri.TryCreate(SelectedScreen.Url, UriKind.Absolute, out var uri))
+        var normalized = NormalizeUrlInput(SelectedScreen.Url);
+        SelectedScreen.Url = normalized;
+
+        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri))
         {
             TestUrlResult = "Invalid URL.";
             return TestUrlResult;

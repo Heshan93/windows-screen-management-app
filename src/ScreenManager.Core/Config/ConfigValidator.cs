@@ -7,6 +7,31 @@ public sealed record ConfigValidationResult(AppConfig NormalizedConfig, IReadOnl
 
 internal static class ConfigValidator
 {
+    private static string? NormalizeHttpUrl(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var value = raw.Trim();
+        if (Uri.TryCreate(value, UriKind.Absolute, out var direct) &&
+            (direct.Scheme == Uri.UriSchemeHttp || direct.Scheme == Uri.UriSchemeHttps))
+        {
+            return direct.ToString();
+        }
+
+        // Friendly normalization for operator input like "mypos.local" or "example.com/path".
+        if (!value.Contains("://", StringComparison.Ordinal) &&
+            Uri.TryCreate("https://" + value, UriKind.Absolute, out var withHttps) &&
+            (withHttps.Scheme == Uri.UriSchemeHttp || withHttps.Scheme == Uri.UriSchemeHttps))
+        {
+            return withHttps.ToString();
+        }
+
+        return null;
+    }
+
     public static ConfigValidationResult Normalize(AppConfig input)
     {
         var diagnostics = new List<string>();
@@ -48,11 +73,16 @@ internal static class ConfigValidator
                 AllowedDomains = allowedDomains
             };
 
-            if (!Uri.TryCreate(screen.Url, UriKind.Absolute, out var uri) ||
-                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            var normalizedUrl = NormalizeHttpUrl(screen.Url);
+            if (normalizedUrl is null)
             {
                 fixedScreen = fixedScreen with { Url = "https://example.org" };
                 diagnostics.Add($"screens[{screen.Id}].url invalid; set to https://example.org.");
+            }
+            else if (!string.Equals(normalizedUrl, screen.Url, StringComparison.Ordinal))
+            {
+                fixedScreen = fixedScreen with { Url = normalizedUrl };
+                diagnostics.Add($"screens[{screen.Id}].url normalized to {normalizedUrl}.");
             }
 
             var zoom = screen.ZoomPercent;

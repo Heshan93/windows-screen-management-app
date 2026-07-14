@@ -1,7 +1,8 @@
 param(
     [string]$Configuration = "Release",
     [string]$CertificateThumbprint = "",
-    [string]$TimeStampUrl = "http://timestamp.digicert.com"
+    [string]$TimeStampUrl = "http://timestamp.digicert.com",
+    [string]$BuildRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,15 +10,29 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
 
+# When -BuildRoot is supplied (e.g. a drive with more free space), redirect the large
+# publish output and all temp/CAB work there so a nearly-full C: drive does not break the build.
+$publishArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($BuildRoot)) {
+    $publishDir = (Join-Path $BuildRoot "publish\win-x64") + "\"
+    $tempDir = Join-Path $BuildRoot "temp"
+    New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $env:TEMP = $tempDir
+    $env:TMP = $tempDir
+    $publishArgs = @("-p:PublishDir=$publishDir")
+    Write-Host "BuildRoot override active. Publish output: $publishDir ; TEMP: $tempDir"
+}
+
 try {
     Write-Host "Publishing ScreenManager.App (win-x64 self-contained single-file)..."
-    dotnet publish src/ScreenManager.App/ScreenManager.App.csproj -c $Configuration -p:PublishProfile=win-x64-selfcontained
+    dotnet publish src/ScreenManager.App/ScreenManager.App.csproj -c $Configuration -p:PublishProfile=win-x64-selfcontained @publishArgs
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE. The MSI was NOT rebuilt. Fix the publish error before packaging."
     }
 
     Write-Host "Building MSI package..."
-    dotnet build src/ScreenManager.Packaging/ScreenManager.Installer/ScreenManager.Installer.csproj -c $Configuration
+    dotnet build src/ScreenManager.Packaging/ScreenManager.Installer/ScreenManager.Installer.csproj -c $Configuration @publishArgs
     if ($LASTEXITCODE -ne 0) {
         throw "MSI build failed with exit code $LASTEXITCODE."
     }

@@ -54,9 +54,9 @@ public partial class SetupWizardWindow : Window
         var displays = _displayManager.Enumerate().OrderBy(d => d.X).ThenBy(d => d.Y).ToList();
         var screens = new List<ScreenConfig>
         {
-            new() { Id = "wizard-till", Name = "Till", Enabled = true, AppType = AppType.Till, Url = "https://example.org/till", DisplayKey = displays.ElementAtOrDefault(0)?.StableKey ?? string.Empty, DisplayNumberHint = 1 },
-            new() { Id = "wizard-kds", Name = "Kitchen", Enabled = true, AppType = AppType.Kds, Url = "https://example.org/kds", DisplayKey = displays.ElementAtOrDefault(1)?.StableKey ?? string.Empty, DisplayNumberHint = 2 },
-            new() { Id = "wizard-menu", Name = "Menu", Enabled = true, AppType = AppType.Menu, Url = "https://example.org/menu", DisplayKey = displays.ElementAtOrDefault(2)?.StableKey ?? string.Empty, DisplayNumberHint = 3 }
+            new() { Id = "wizard-till", Name = "Till", Enabled = displays.Count >= 1, AppType = AppType.Till, Url = "https://example.org/till", DisplayKey = displays.ElementAtOrDefault(0)?.StableKey ?? string.Empty, DisplayNumberHint = 1 },
+            new() { Id = "wizard-kds", Name = "Kitchen", Enabled = displays.Count >= 2, AppType = AppType.Kds, Url = "https://example.org/kds", DisplayKey = displays.ElementAtOrDefault(1)?.StableKey ?? string.Empty, DisplayNumberHint = 2 },
+            new() { Id = "wizard-menu", Name = "Menu", Enabled = displays.Count >= 3, AppType = AppType.Menu, Url = "https://example.org/menu", DisplayKey = displays.ElementAtOrDefault(2)?.StableKey ?? string.Empty, DisplayNumberHint = 3 }
         };
 
         await _configService.SaveAsync(config with { Screens = screens });

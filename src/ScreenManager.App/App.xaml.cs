@@ -475,8 +475,7 @@ public partial class App : System.Windows.Application
 
 		public static BootstrapConfiguration Load()
 		{
-			var commonData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-			var root = Path.Combine(commonData, "OrderBuddy", "ScreenManager");
+			var root = ResolveWritableRoot();
 			var logs = Path.Combine(root, "logs");
 			Directory.CreateDirectory(root);
 			Directory.CreateDirectory(logs);
@@ -507,6 +506,51 @@ public partial class App : System.Windows.Application
 			}
 
 			return new BootstrapConfiguration(root, logs, "Information");
+		}
+
+		/// <summary>
+		/// Picks the first data root the current (possibly non-admin kiosk) user can actually write to.
+		/// Preferred: %ProgramData%\OrderBuddy\ScreenManager. If that is not writable (e.g. it was created
+		/// admin-owned by an elevated installer and never re-permissioned), fall back to a per-user location
+		/// so the app still starts instead of dying with "Access to the path is denied".
+		/// </summary>
+		private static string ResolveWritableRoot()
+		{
+			var candidates = new[]
+			{
+				Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "OrderBuddy", "ScreenManager"),
+				Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OrderBuddy", "ScreenManager")
+			};
+
+			foreach (var candidate in candidates)
+			{
+				if (IsWritable(candidate))
+				{
+					StartupDiagnostics.Write($"Bootstrap: using data root '{candidate}'.");
+					return candidate;
+				}
+
+				StartupDiagnostics.Write($"Bootstrap: data root '{candidate}' is NOT writable; trying next candidate.");
+			}
+
+			// Last resort: use the first candidate anyway so behaviour is unchanged if probing was misleading.
+			return candidates[0];
+		}
+
+		private static bool IsWritable(string directory)
+		{
+			try
+			{
+				Directory.CreateDirectory(directory);
+				var probe = Path.Combine(directory, ".write-probe-" + Guid.NewGuid().ToString("N"));
+				File.WriteAllText(probe, "probe");
+				File.Delete(probe);
+				return true;
+			}
+			catch
+			{
+				return false;
+			}
 		}
 	}
 }

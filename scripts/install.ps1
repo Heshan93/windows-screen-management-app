@@ -90,8 +90,26 @@ if ($install.ExitCode -ne 0) {
 
 Write-Host "Installation complete."
 
-# --- Post-install diagnostics: confirm the runtime prerequisites and the app itself. ---
+# --- Ensure the kiosk (standard) user can read/write config + logs. ---
+# The app runs as a normal user via the logon Scheduled Task, but this folder may have been
+# created by the elevated installer (admin-owned, users read-only). Grant BUILTIN\Users Modify
+# on the whole tree so the kiosk user can write config.json and logs. Using the well-known SID
+# (S-1-5-32-545) avoids localization problems.
 $programData = Join-Path ${env:ProgramData} "OrderBuddy\ScreenManager"
+try {
+    New-Item -ItemType Directory -Path $programData -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $programData "logs") -Force | Out-Null
+    Write-Host "Granting the Users group write access to $programData ..."
+    & icacls "$programData" /grant "*S-1-5-32-545:(OI)(CI)M" /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "icacls returned exit code $LASTEXITCODE while granting Users write access. The kiosk user may not be able to write config."
+    }
+}
+catch {
+    Write-Warning "Failed to set config folder permissions: $($_.Exception.Message)"
+}
+
+# --- Post-install diagnostics: confirm the runtime prerequisites and the app itself. ---
 Write-Host ""
 Write-Host "Post-install checks:"
 $wv2Status = "MISSING"

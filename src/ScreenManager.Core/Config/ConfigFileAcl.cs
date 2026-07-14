@@ -49,9 +49,12 @@ internal static class ConfigFileAcl
                 systemSid,
                 FileSystemRights.FullControl,
                 AccessControlType.Allow));
+            // The kiosk application runs as a standard (non-admin) user, so the interactive
+            // Users group MUST be able to read AND write the config. Granting only read here
+            // locks the running user out of its own config and breaks the app on a real kiosk.
             fileSecurity.AddAccessRule(new FileSystemAccessRule(
                 usersSid,
-                FileSystemRights.ReadAndExecute,
+                FileSystemRights.Modify,
                 AccessControlType.Allow));
 
             var fileInfo = new FileInfo(filePath);
