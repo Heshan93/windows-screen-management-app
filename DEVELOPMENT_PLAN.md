@@ -10,8 +10,8 @@
 
 | Phase | Focus | Tasks | Status | Exit gate |
 |---|---|---:|---|---|
-| P0 | Project bootstrap & tooling | 6 | ☐ 0/6 | Repo builds & runs empty WPF app |
-| P1 | Spike: WebView2 kiosk window | 7 | ☐ 0/7 | URL renders full-screen + reload on crash |
+| P0 | Project bootstrap & tooling | 6 | ☑ 6/6 | Repo builds & runs empty WPF app |
+| P1 | Spike: WebView2 kiosk window | 7 | ☑ 7/7 | URL renders full-screen + reload on crash |
 | P2 | Config service & schema | 8 | ☐ 0/8 | Load/validate/save/migrate/backup proven |
 | P3 | Multi-display core | 8 | ☐ 0/8 | N monitors → N windows, stable-key binding |
 | P4 | Kiosk lockdown & security | 9 | ☐ 0/9 | Cannot exit; nav locked; single instance |
@@ -23,7 +23,7 @@
 | P10 | Auto-update & hardening | 6 | ☐ 0/6 | Signed delta update + rollback verified |
 | P11 | Remote-ready hooks (optional) | 5 | ☐ 0/5 | Config pull behind flag, no regression |
 | P12 | QA, soak & release | 8 | ☐ 0/8 | Full test matrix green; 72h soak passes |
-| **Total** | | **96** | **☐ 0/96** | Production release |
+| **Total** | | **96** | **◐ 13/96** | Production release |
 
 > Update the counts as tasks complete (e.g. `◐ 3/8`).
 
@@ -43,17 +43,17 @@
 
 **Goal:** A clean, buildable .NET 8 WPF solution with logging, DI, and repo hygiene.
 
-- [ ] **P0-1 (P0)** Create solution `OrderBuddy.ScreenManager.sln`; projects: `ScreenManager.App` (WPF, net8.0-windows), `ScreenManager.Core` (class lib), `ScreenManager.Tests` (xUnit).
+- [x] **P0-1 (P0)** Create solution `OrderBuddy.ScreenManager.sln`; projects: `ScreenManager.App` (WPF, net8.0-windows), `ScreenManager.Core` (class lib), `ScreenManager.Tests` (xUnit).
   - *Accept:* `dotnet build` succeeds; empty WPF window shows.
-- [ ] **P0-2 (P0)** Add NuGet deps: `Microsoft.Web.WebView2`, `Serilog`, `Serilog.Sinks.File`, `Serilog.Sinks.EventLog`, `Microsoft.Extensions.Hosting` (DI/host), `System.Text.Json`.
+- [x] **P0-2 (P0)** Add NuGet deps: `Microsoft.Web.WebView2`, `Serilog`, `Serilog.Sinks.File`, `Serilog.Sinks.EventLog`, `Microsoft.Extensions.Hosting` (DI/host), `System.Text.Json`.
   - *Accept:* restore succeeds; versions pinned in `Directory.Packages.props`.
-- [ ] **P0-3 (P0)** Set up generic host + DI container; register `IConfigService`, `IDisplayManager`, `IHealthMonitor`, `ILogger` placeholders.
+- [x] **P0-3 (P0)** Set up generic host + DI container; register `IConfigService`, `IDisplayManager`, `IHealthMonitor`, `ILogger` placeholders.
   - *Accept:* app starts via host; DI resolves stubs.
-- [ ] **P0-4 (P1)** Configure Serilog: rolling file to `%ProgramData%\OrderBuddy\ScreenManager\logs`, level from config, Event Log sink for errors.
+- [x] **P0-4 (P1)** Configure Serilog: rolling file to `%ProgramData%\OrderBuddy\ScreenManager\logs`, level from config, Event Log sink for errors.
   - *Accept:* startup writes a log line; file rotates by day/size.
-- [ ] **P0-5 (P1)** Repo hygiene: `.gitignore` (bin/obj/publish), `.editorconfig`, `Directory.Build.props` (nullable enable, LangVersion, versioning), README stub.
+- [x] **P0-5 (P1)** Repo hygiene: `.gitignore` (bin/obj/publish), `.editorconfig`, `Directory.Build.props` (nullable enable, LangVersion, versioning), README stub.
   - *Accept:* clean `git status` after build; analyzers on.
-- [ ] **P0-6 (P2)** CI stub (GitHub Actions / local script): restore → build → test.
+- [x] **P0-6 (P2)** CI stub (GitHub Actions / local script): restore → build → test.
   - *Accept:* pipeline/script runs green on empty tests.
 
 **Exit gate:** solution builds and runs an empty WPF window with logging active.
@@ -64,19 +64,19 @@
 
 **Goal:** Prove the core stack — a borderless full-screen WebView2 that loads a URL and survives a renderer crash.
 
-- [ ] **P1-1 (P0)** `KioskWindow` (WPF): borderless (`WindowStyle=None`), no resize, top-most, full-screen on primary monitor.
+- [x] **P1-1 (P0)** `KioskWindow` (WPF): borderless (`WindowStyle=None`), no resize, top-most, full-screen on primary monitor.
   - *Accept:* window covers one monitor edge-to-edge, no chrome.
-- [ ] **P1-2 (P0)** Host `WebView2` control filling the window; init `CoreWebView2` with a per-app user-data folder under `%ProgramData%`.
+- [x] **P1-2 (P0)** Host `WebView2` control filling the window; init `CoreWebView2` with a per-app user-data folder under `%ProgramData%`.
   - *Accept:* a hard-coded URL renders full-screen.
-- [ ] **P1-3 (P0)** Handle `CoreWebView2.ProcessFailed`: log, then recreate/reload WebView2.
+- [x] **P1-3 (P0)** Handle `CoreWebView2.ProcessFailed`: log, then recreate/reload WebView2.
   - *Accept:* killing the WebView2 renderer process auto-recovers the page.
-- [ ] **P1-4 (P1)** Handle `NavigationCompleted`: capture success/failure + web error status.
+- [x] **P1-4 (P1)** Handle `NavigationCompleted`: capture success/failure + web error status.
   - *Accept:* bad URL logs a navigation failure with status.
-- [ ] **P1-5 (P1)** Disable default context menu, dev tools, status bar, zoom-by-ctrl-scroll via `CoreWebView2Settings`.
+- [x] **P1-5 (P1)** Disable default context menu, dev tools, status bar, zoom-by-ctrl-scroll via `CoreWebView2Settings`.
   - *Accept:* right-click shows nothing; F12 does nothing.
-- [ ] **P1-6 (P1)** Verify autoplay media works (no gesture requirement) via launch args/settings.
+- [x] **P1-6 (P1)** Verify autoplay media works (no gesture requirement) via launch args/settings.
   - *Accept:* a test autoplay video plays without interaction.
-- [ ] **P1-7 (P2)** Measure cold-start time and idle memory; record baseline in Change Log.
+- [x] **P1-7 (P2)** Measure cold-start time and idle memory; record baseline in Change Log.
   - *Accept:* numbers recorded for later comparison.
 
 **Exit gate:** URL renders full-screen; renderer crash auto-recovers.
@@ -410,5 +410,7 @@ flowchart LR
 | Date | Phase/Task | Change / decision | By |
 |---|---|---|---|
 | 2026-07-13 | — | Development plan created from DESIGN.md | — |
+| 2026-07-13 | P0 complete | All 6 tasks done. Solution: 3 projects (App/Core/Tests). Build: 0 errors/0 warnings (Debug + Release). Tests: 6/6 passed. Added `Serilog.Extensions.Hosting` (missing from initial pinning). Removed `Class1.cs` stub. DI host + Serilog rolling file + EventLog sink wired. `Directory.Packages.props` central versioning active. `.editorconfig`/`.gitignore`/`Directory.Build.props`/`README.md`/`.github/workflows/ci.yml` all present. | — |
+| 2026-07-14 | P1 complete | Implemented `KioskWindow` full-screen borderless top-most on primary monitor with embedded WebView2 and shared environment provider. WebView2 user-data path: `%ProgramData%\OrderBuddy\ScreenManager\webview2`. Applied settings lockdown (context menu/devtools/statusbar/zoom disabled). Added autoplay arg `--autoplay-policy=no-user-gesture-required`. Added `NavigationCompleted` logging with success/error status. Added `ProcessFailed` recovery (reinitialize + reload) and fixed crash-path cleanup bug discovered during forced browser-process kill test. Validation: Build 0 errors/0 warnings, tests 6/6 passed. Runtime evidence in logs: successful navigation (HTTP 200), forced process failure detected and recovered. Baseline metrics: ColdStartMs 1305, idle WorkingSet ~95.38 MB. | — |
 
 > Add a row whenever a task completes, a decision changes, or a baseline/metric is recorded (e.g. P1-7 cold-start numbers).

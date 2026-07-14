@@ -1,0 +1,15 @@
+bin/
+obj/
+publish/
+.vs/
+*.user
+*.suo
+*.nupkg
+*.snupkg
+TestResults/
+artifacts/
+coverage/
+*.log
+*.tmp
+*.cache
+*.ide/
