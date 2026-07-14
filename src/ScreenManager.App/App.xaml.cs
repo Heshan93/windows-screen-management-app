@@ -33,8 +33,9 @@ public partial class App : Application
 			{
 				services.AddSingleton(bootstrap);
 				services.AddSingleton(browserOptions);
+				services.AddSingleton(ConfigServiceOptions.FromRootDirectory(bootstrap.ProgramDataRoot));
 				services.AddSingleton<IWebViewEnvironmentProvider, WebViewEnvironmentProvider>();
-				services.AddSingleton<IConfigService, PlaceholderConfigService>();
+				services.AddSingleton<IConfigService, ConfigService>();
 				services.AddSingleton<IDisplayManager, PlaceholderDisplayManager>();
 				services.AddSingleton<IHealthMonitor, PlaceholderHealthMonitor>();
 				services.AddSingleton<Serilog.ILogger>(Log.Logger);
