@@ -16,14 +16,14 @@
 | P3 | Multi-display core | 8 | ☑ 8/8 | N monitors → N windows, stable-key binding |
 | P4 | Kiosk lockdown & security | 9 | ☑ 9/9 | Cannot exit; nav locked; single instance |
 | P5 | Health monitoring & recovery | 9 | ☑ 9/9 | All injected faults self-heal, no thrash |
-| P6 | Fallback & offline behaviour | 7 | ☐ 0/7 | Branded fallback + correct offline cause |
+| P6 | Fallback & offline behaviour | 7 | ☑ 7/7 | Branded fallback + correct offline cause |
 | P7 | Admin UX (wizard + Display Wall) | 10 | ☐ 0/10 | Non-tech user configures 3 screens unaided |
 | P8 | Startup integration & lifecycle | 6 | ☐ 0/6 | Auto-start, restart-on-crash, sleep/resume |
 | P9 | Packaging & installer | 7 | ☐ 0/7 | Signed silent MSI + WebView2 bootstrap |
 | P10 | Auto-update & hardening | 6 | ☐ 0/6 | Signed delta update + rollback verified |
 | P11 | Remote-ready hooks (optional) | 5 | ☐ 0/5 | Config pull behind flag, no regression |
 | P12 | QA, soak & release | 8 | ☐ 0/8 | Full test matrix green; 72h soak passes |
-| **Total** | | **96** | **◐ 47/96** | Production release |
+| **Total** | | **96** | **◐ 54/96** | Production release |
 
 > Update the counts as tasks complete (e.g. `◐ 3/8`).
 
@@ -191,19 +191,19 @@
 
 **Goal:** Branded in-app fallback overlay + accurate offline-cause detection.
 
-- [ ] **P6-1 (P0)** WPF fallback overlay layered over WebView2: logo, device/screen name, connection state, last-connected, retry countdown, progress.
+- [x] **P6-1 (P0)** WPF fallback overlay layered over WebView2: logo, device/screen name, connection state, last-connected, retry countdown, progress.
   - *Accept:* overlay renders with zero network; matches DESIGN §4.5.
-- [ ] **P6-2 (P0)** Show/hide fallback driven by `IHealthMonitor` state; auto-dismiss on reconnect.
+- [x] **P6-2 (P0)** Show/hide fallback driven by `IHealthMonitor` state; auto-dismiss on reconnect.
   - *Accept:* fallback appears on failure, disappears on recovery.
-- [ ] **P6-3 (P0)** Connectivity signals: (a) internet HTTP probe (captive-portal aware), (b) local app-origin HEAD.
+- [x] **P6-3 (P0)** Connectivity signals: (a) internet HTTP probe (captive-portal aware), (b) local app-origin HEAD.
   - *Accept:* both signals reported independently in logs.
-- [ ] **P6-4 (P1)** Fallback message names the specific cause (internet vs local server).
+- [x] **P6-4 (P1)** Fallback message names the specific cause (internet vs local server).
   - *Accept:* server-down (internet up) shows "server" message.
-- [ ] **P6-5 (P1)** Auto-reload triggers only when the *relevant* signal recovers.
+- [x] **P6-5 (P1)** Auto-reload triggers only when the *relevant* signal recovers.
   - *Accept:* internet-only outage doesn't reload a healthy local page.
-- [ ] **P6-6 (P2)** Optional custom fallback modes: custom HTML file / image (carry v1 capability).
+- [x] **P6-6 (P2)** Optional custom fallback modes: custom HTML file / image (carry v1 capability).
   - *Accept:* custom HTML/image renders when selected.
-- [ ] **P6-7 (P2)** "Last successful connection" timestamp persisted per screen.
+- [x] **P6-7 (P2)** "Last successful connection" timestamp persisted per screen.
   - *Accept:* value survives a reload and shows correctly.
 
 **Exit gate:** branded fallback shows the correct cause and self-recovers on reconnect.
@@ -409,6 +409,7 @@ flowchart LR
 
 | Date | Phase/Task | Change / decision | By |
 |---|---|---|---|
+| 2026-07-14 | P6 complete | Implemented fallback/offline behavior end-to-end: replaced basic waiting overlay with branded fallback UX (device + screen identity, cause text, last successful connection, retry countdown, progress), integrated health-driven show/hide semantics with auto-dismiss on successful navigation, added dual connectivity probing (internet probe with captive-portal awareness + origin probe) and classification (`ConnectivityClassifier`) for cause-specific handling, added guarded offline simulation toggles for validation (`ORDERBUDDY_FORCE_INTERNET_DOWN`, `ORDERBUDDY_FORCE_ORIGIN_DOWN`), implemented optional custom fallback modes (`Fallback.Mode` supports branded/image/customHtml with local file loading), and added per-screen last-success persistence in `%ProgramData%\\OrderBuddy\\ScreenManager\\screen-status.json` through `LastConnectionStore`. Validation: Debug/Release builds succeeded (0 warnings/0 errors), tests passed 33/33 in both configurations including new P6 classifier and persistence tests, runtime evidence captured fallback health transitions and status-file persistence (`screen-status.json` contains `screen-primary` timestamp). | — |
 | 2026-07-14 | P5 complete | Implemented layered health/recovery stack end-to-end: expanded `IHealthMonitor` into per-screen state machine (`Loading/Online/Recovering/Offline/Failed`) with snapshots, failure taxonomy (`Navigation`, `ProcessCrash`, `HeartbeatTimeout`, `Connectivity`, `MemoryPressure`, `Manual`), capped backoff sequencing and offline slow-probe scheduling (15–30s bounded), heartbeat timeout evaluation, and recovery gating (`ShouldAttemptRecovery`). `KioskWindow` now injects JS heartbeat (`AddScriptToExecuteOnDocumentCreatedAsync`), processes `WebMessageReceived` heartbeats, tracks failures through health monitor, displays branded in-app recovery overlay with next-attempt timing, runs connectivity probes before retries (`NetworkInterface` + HEAD/GET), performs controlled recovery reloads, supports optional memory watchdog via env var `ORDERBUDDY_MEMORY_WATCHDOG_MB`, and honours per-screen periodic reload only while state is `Online`. Added app-level nightly scheduler (`NightlyMaintenanceScheduler`) driven by config time/action with live reschedule on config change and supervisor-wide reload trigger (`KioskSupervisor.ReloadAllWindows`). Validation: Debug build/test passed (0 warnings/errors, 28/28 tests), Release build/test passed (0 warnings/errors, 28/28 tests), plus runtime evidence in logs for nightly scheduling and P5-integrated screen health lifecycle events. Added `P5HealthMonitorTests` covering backoff escalation, heartbeat timeout transition, connectivity transition, recovery timing gate, and memory-pressure path. Runtime fault injection requiring live config mutation was partially constrained by existing ProgramData ACL hardening (`UnauthorizedAccessException` when writing `%ProgramData%\OrderBuddy\ScreenManager\config.json`) which is expected under P4 security policy. | — |
 | 2026-07-14 | P4 complete | Implemented kiosk lockdown/security end-to-end: single-instance mutex guard with explicit second-launch warning log, close prevention (`Window.Closing` + supervisor-authorized `RequestClose()`), optional global keyboard lock service wiring from config (`LockSystemKeys`) with live apply on config change, navigation lockdown (`file:`/`about:`/off-list domain blocked), popup policy (block/redirect/allow-new-window based on screen settings), permission auto-resolution from per-screen `AutoGrantPermissions`, certificate error policy from per-screen `AllowInsecureCertificates`, and config ACL hardening for `%ProgramData%` config/backup (`Administrators` + `SYSTEM`, path-gated to avoid temp/test file lockouts). Decision note: browser accelerator suppression implemented using `CoreWebView2Settings.AreBrowserAcceleratorKeysEnabled = false` because `AcceleratorKeyPressed` was unavailable in the current WebView2 API surface. Validation: Debug + Release builds succeed (0 errors/0 warnings), tests 22/22 passed in both configurations, policy tests added in `P4SecurityPolicyTests`, and runtime logs captured single-instance behavior (`Second launch detected. Exiting due to single-instance guard.`) plus hardened WebView2 settings line including accelerator disable. | — |
 | 2026-07-13 | — | Development plan created from DESIGN.md | — |

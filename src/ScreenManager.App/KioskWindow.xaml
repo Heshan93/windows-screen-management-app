@@ -9,22 +9,86 @@
         ShowInTaskbar="False"
         Background="Black">
     <Grid x:Name="RootGrid" Background="Black">
-        <Border x:Name="WaitingOverlay"
-                Background="#CC111111"
+        <Border x:Name="FallbackOverlay"
+                Background="#E6111111"
                 Visibility="Collapsed">
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                <TextBlock x:Name="WaitingTitle"
-                           FontSize="28"
-                           Foreground="White"
-                           HorizontalAlignment="Center"
-                           Text="Waiting for assigned display" />
-                <TextBlock x:Name="WaitingSubtitle"
-                           Margin="0,10,0,0"
-                           FontSize="16"
-                           Foreground="#DDDDDD"
-                           HorizontalAlignment="Center"
-                           Text="Screen binding will auto-recover when the monitor is connected." />
-            </StackPanel>
+            <Grid Margin="40">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" HorizontalAlignment="Center" Margin="0,0,0,10">
+                    <TextBlock x:Name="FallbackBrand"
+                               Text="OrderBuddy"
+                               FontSize="40"
+                               FontWeight="Bold"
+                               Foreground="#FFF3F3F3"
+                               HorizontalAlignment="Center" />
+                    <TextBlock x:Name="FallbackTitle"
+                               Text="Recovering display"
+                               FontSize="26"
+                               Foreground="#FFFFFFFF"
+                               HorizontalAlignment="Center"
+                               Margin="0,8,0,0" />
+                    <TextBlock x:Name="FallbackSubtitle"
+                               Text="Checking connectivity and retry schedule"
+                               FontSize="16"
+                               Foreground="#FFDDDDDD"
+                               TextAlignment="Center"
+                               HorizontalAlignment="Center"
+                               Margin="0,8,0,0" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Margin="0,10,0,10" HorizontalAlignment="Center">
+                    <TextBlock x:Name="FallbackDeviceInfo"
+                               Text="Device: -"
+                               FontSize="15"
+                               Foreground="#FFE7E7E7"
+                               HorizontalAlignment="Center" />
+                    <TextBlock x:Name="FallbackConnectionCause"
+                               Text="Cause: -"
+                               FontSize="15"
+                               Foreground="#FFFFD27A"
+                               HorizontalAlignment="Center"
+                               Margin="0,4,0,0" />
+                    <TextBlock x:Name="FallbackLastConnected"
+                               Text="Last successful connection: never"
+                               FontSize="14"
+                               Foreground="#FFD6D6D6"
+                               HorizontalAlignment="Center"
+                               Margin="0,4,0,0" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="2" Margin="0,8,0,16" HorizontalAlignment="Center">
+                    <ProgressBar x:Name="FallbackProgress"
+                                 Width="420"
+                                 Height="12"
+                                 IsIndeterminate="True"
+                                 Foreground="#FFEFA64A"
+                                 Background="#44222222" />
+                    <TextBlock x:Name="FallbackRetryCountdown"
+                               Text="Next retry: now"
+                               FontSize="14"
+                               Foreground="#FFF0E6D2"
+                               HorizontalAlignment="Center"
+                               Margin="0,8,0,0" />
+                </StackPanel>
+
+                <Grid Grid.Row="3" HorizontalAlignment="Center" VerticalAlignment="Top">
+                    <Image x:Name="CustomFallbackImage"
+                           Visibility="Collapsed"
+                           MaxWidth="900"
+                           MaxHeight="500"
+                           Stretch="Uniform" />
+                    <WebBrowser x:Name="CustomFallbackHtmlBrowser"
+                                Visibility="Collapsed"
+                                Width="900"
+                                Height="500" />
+                </Grid>
+            </Grid>
         </Border>
     </Grid>
 </Window>

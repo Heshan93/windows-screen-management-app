@@ -1,14 +1,17 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using OrderBuddy.ScreenManager.App.Browser;
+using OrderBuddy.ScreenManager.App.Status;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using OrderBuddy.ScreenManager.Core.Health;
@@ -33,6 +36,7 @@ public partial class KioskWindow : Window
     private readonly IConfigService _configService;
     private readonly IHealthMonitor _healthMonitor;
     private readonly ISystemClock _clock;
+    private readonly ILastConnectionStore _lastConnectionStore;
     private readonly Stopwatch _coldStartStopwatch = new();
     private readonly DispatcherTimer _healthTickTimer;
     private readonly DispatcherTimer _reloadIntervalTimer;
@@ -46,6 +50,8 @@ public partial class KioskWindow : Window
     private bool _allowClose;
     private bool _recoveryInProgress;
     private DateTimeOffset _lastHealthWarningUtc = DateTimeOffset.MinValue;
+    private ConnectivityFailureCause _lastFailureCause = ConnectivityFailureCause.Unknown;
+    private DateTimeOffset? _lastSuccessfulConnectionUtc;
     private int _memoryWatchdogThresholdMb;
 
     public KioskWindow(
@@ -55,7 +61,8 @@ public partial class KioskWindow : Window
         IConfigService configService,
         IDisplayManager displayManager,
         IHealthMonitor healthMonitor,
-        ISystemClock clock)
+        ISystemClock clock,
+        ILastConnectionStore lastConnectionStore)
     {
         _browserOptions = browserOptions;
         _environmentProvider = environmentProvider;
@@ -63,6 +70,7 @@ public partial class KioskWindow : Window
         _configService = configService;
         _healthMonitor = healthMonitor;
         _clock = clock;
+        _lastConnectionStore = lastConnectionStore;
 
         // Keep these dependencies in the constructor to prove P0 DI contracts remain valid.
         _ = displayManager;
@@ -121,6 +129,7 @@ public partial class KioskWindow : Window
     {
         _activeScreen = screen;
         _activeDisplay = display;
+        _lastSuccessfulConnectionUtc = _lastConnectionStore.GetLastSuccessUtc(screen.Id);
 
         _healthMonitor.EnsureScreen(screen.Id);
         ConfigureReloadInterval(screen);
@@ -142,9 +151,12 @@ public partial class KioskWindow : Window
         ApplyDisplayPlacement(fallbackDisplay);
         CleanupWebView();
 
-        WaitingTitle.Text = $"Waiting for assigned display ({screen.Name})";
-        WaitingSubtitle.Text = $"Display key '{screen.DisplayKey}' not detected. Reconnect the monitor to auto-start.";
-        WaitingOverlay.Visibility = Visibility.Visible;
+        ShowFallbackOverlay(
+            title: $"Waiting for assigned display ({screen.Name})",
+            message: $"Display key '{screen.DisplayKey}' not detected. Reconnect the monitor to auto-start.",
+            connectivityMessage: "Cause: assigned display unavailable.",
+            nextAttempt: null,
+            screen: screen);
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -335,7 +347,11 @@ public partial class KioskWindow : Window
         if (e.IsSuccess)
         {
             var source = _webView?.CoreWebView2?.Source ?? _activeScreen.Url;
-            _healthMonitor.RecordNavigationSuccess(_activeScreen.Id, source, _clock.UtcNow);
+            var now = _clock.UtcNow;
+            _healthMonitor.RecordNavigationSuccess(_activeScreen.Id, source, now);
+            _lastSuccessfulConnectionUtc = now;
+            _lastFailureCause = ConnectivityFailureCause.None;
+            _ = PersistLastSuccessfulConnectionAsync(_activeScreen.Id, now);
             HideFallbackOverlay();
 
             _logger.Information(
@@ -587,16 +603,18 @@ public partial class KioskWindow : Window
         try
         {
             var now = _clock.UtcNow;
-            var reachable = await ProbeConnectivityAsync(_activeScreen.Url);
+            var connectivity = await ProbeConnectivityAsync(_activeScreen.Url);
             var connectivitySnapshot = _healthMonitor.RecordConnectivity(
                 _activeScreen.Id,
-                reachable,
+                connectivity.InternetReachable && connectivity.OriginReachable,
                 now,
-                reachable ? "probe succeeded" : "probe failed");
+                connectivity.Message);
 
-            if (!reachable)
+            _lastFailureCause = connectivity.FailureCause;
+
+            if (!connectivity.InternetReachable || !connectivity.OriginReachable)
             {
-                ShowRecoveryOverlay(connectivitySnapshot, "Network is unavailable. Holding on fallback with slow probe.");
+                ShowRecoveryOverlay(connectivitySnapshot, connectivity.Message + " Holding on fallback with slow probe.");
                 return;
             }
 
@@ -630,18 +648,70 @@ public partial class KioskWindow : Window
         }
     }
 
-    private async Task<bool> ProbeConnectivityAsync(string url)
+    private async Task<ConnectivityStatus> ProbeConnectivityAsync(string url)
     {
-        if (!NetworkInterface.GetIsNetworkAvailable())
+        if (Environment.GetEnvironmentVariable("ORDERBUDDY_FORCE_INTERNET_DOWN") == "1")
         {
-            return false;
+            return ConnectivityClassifier.Evaluate(internetReachable: false, originReachable: false, captivePortalDetected: false);
+        }
+
+        var internetProbe = await ProbeInternetAsync();
+
+        if (!internetProbe.InternetReachable)
+        {
+            return ConnectivityClassifier.Evaluate(
+                internetReachable: false,
+                originReachable: false,
+                captivePortalDetected: internetProbe.CaptivePortalDetected);
+        }
+
+        if (Environment.GetEnvironmentVariable("ORDERBUDDY_FORCE_ORIGIN_DOWN") == "1")
+        {
+            return ConnectivityClassifier.Evaluate(internetReachable: true, originReachable: false, captivePortalDetected: false);
         }
 
         if (!Uri.TryCreate(url, UriKind.Absolute, out var targetUri))
         {
-            return false;
+            return ConnectivityClassifier.Evaluate(internetReachable: true, originReachable: false, captivePortalDetected: false);
         }
 
+        var originReachable = await ProbeOriginAsync(targetUri);
+        return ConnectivityClassifier.Evaluate(internetReachable: true, originReachable, captivePortalDetected: false);
+    }
+
+    private async Task<(bool InternetReachable, bool CaptivePortalDetected)> ProbeInternetAsync()
+    {
+        if (!NetworkInterface.GetIsNetworkAvailable())
+        {
+            return (false, false);
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "http://www.msftconnecttest.com/connecttest.txt");
+            using var response = await _connectivityClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return (false, false);
+            }
+
+            var body = await response.Content.ReadAsStringAsync();
+            var captive = !body.Contains("Microsoft Connect Test", StringComparison.OrdinalIgnoreCase);
+            return (!captive, captive);
+        }
+        catch (HttpRequestException)
+        {
+            return (false, false);
+        }
+        catch (TaskCanceledException)
+        {
+            return (false, false);
+        }
+    }
+
+    private async Task<bool> ProbeOriginAsync(Uri targetUri)
+    {
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Head, targetUri);
@@ -673,11 +743,20 @@ public partial class KioskWindow : Window
             return;
         }
 
-        WaitingTitle.Text = $"Recovering { _activeScreen.Name }";
+        var fallbackCauseText = _lastFailureCause switch
+        {
+            ConnectivityFailureCause.InternetDown => "Cause: internet connectivity unavailable.",
+            ConnectivityFailureCause.OriginDown => "Cause: internet up, app endpoint unavailable.",
+            ConnectivityFailureCause.CaptivePortal => "Cause: captive portal detected.",
+            _ => "Cause: recovering browser session."
+        };
 
-        var nextAttempt = snapshot.NextRecoveryAttemptUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "now";
-        WaitingSubtitle.Text = $"{message} Next attempt: {nextAttempt}.";
-        WaitingOverlay.Visibility = Visibility.Visible;
+        ShowFallbackOverlay(
+            title: $"Recovering {_activeScreen.Name}",
+            message,
+            connectivityMessage: fallbackCauseText,
+            nextAttempt: snapshot.NextRecoveryAttemptUtc,
+            screen: _activeScreen);
 
         var now = _clock.UtcNow;
         if ((now - _lastHealthWarningUtc).TotalSeconds < 5)
@@ -697,9 +776,84 @@ public partial class KioskWindow : Window
 
     private void HideFallbackOverlay()
     {
-        if (WaitingOverlay.Visibility == Visibility.Visible)
+        if (FallbackOverlay.Visibility == Visibility.Visible)
         {
-            WaitingOverlay.Visibility = Visibility.Collapsed;
+            FallbackOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        CustomFallbackImage.Visibility = Visibility.Collapsed;
+        CustomFallbackHtmlBrowser.Visibility = Visibility.Collapsed;
+    }
+
+    private void ShowFallbackOverlay(
+        string title,
+        string message,
+        string connectivityMessage,
+        DateTimeOffset? nextAttempt,
+        ScreenConfig screen)
+    {
+        var lastConnectedText = _lastSuccessfulConnectionUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "never";
+        var retryText = nextAttempt?.ToLocalTime().ToString("HH:mm:ss") ?? "now";
+
+        FallbackTitle.Text = title;
+        FallbackSubtitle.Text = message;
+        FallbackDeviceInfo.Text = $"Device: {_configService.CurrentConfig.Device.DeviceName} | Screen: {screen.Name}";
+        FallbackConnectionCause.Text = connectivityMessage;
+        FallbackLastConnected.Text = $"Last successful connection: {lastConnectedText}";
+        FallbackRetryCountdown.Text = $"Next retry: {retryText}";
+        FallbackOverlay.Visibility = Visibility.Visible;
+
+        ApplyCustomFallback(screen);
+    }
+
+    private void ApplyCustomFallback(ScreenConfig screen)
+    {
+        CustomFallbackImage.Visibility = Visibility.Collapsed;
+        CustomFallbackHtmlBrowser.Visibility = Visibility.Collapsed;
+
+        var mode = screen.Fallback.Mode ?? "branded";
+        if (mode.Equals("image", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(screen.Fallback.ImagePath) &&
+            File.Exists(screen.Fallback.ImagePath))
+        {
+            try
+            {
+                CustomFallbackImage.Source = new BitmapImage(new Uri(screen.Fallback.ImagePath, UriKind.Absolute));
+                CustomFallbackImage.Visibility = Visibility.Visible;
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to load fallback image for screen {ScreenId}.", screen.Id);
+            }
+        }
+
+        if (mode.Equals("customHtml", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(screen.Fallback.CustomHtmlPath) &&
+            File.Exists(screen.Fallback.CustomHtmlPath))
+        {
+            try
+            {
+                var html = File.ReadAllText(screen.Fallback.CustomHtmlPath);
+                CustomFallbackHtmlBrowser.NavigateToString(html);
+                CustomFallbackHtmlBrowser.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to load fallback HTML for screen {ScreenId}.", screen.Id);
+            }
+        }
+    }
+
+    private async Task PersistLastSuccessfulConnectionAsync(string screenId, DateTimeOffset utcNow)
+    {
+        try
+        {
+            await _lastConnectionStore.SetLastSuccessUtcAsync(screenId, utcNow);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to persist last successful connection timestamp for screen {ScreenId}.", screenId);
         }
     }
 

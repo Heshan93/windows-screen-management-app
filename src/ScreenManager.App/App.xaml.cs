@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using OrderBuddy.ScreenManager.App.Browser;
 using OrderBuddy.ScreenManager.App.Display;
 using OrderBuddy.ScreenManager.App.Security;
+using OrderBuddy.ScreenManager.App.Status;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using OrderBuddy.ScreenManager.Core.Health;
@@ -58,6 +59,7 @@ public partial class App : System.Windows.Application
 				services.AddSingleton<ISystemClock, SystemClock>();
 				services.AddSingleton<IHealthMonitor, PlaceholderHealthMonitor>();
 				services.AddSingleton<IKeyboardLockService, WindowsKeyboardLockService>();
+				services.AddSingleton<ILastConnectionStore, LastConnectionStore>();
 				services.AddSingleton<Serilog.ILogger>(Log.Logger);
 				services.AddSingleton<KioskSupervisor>();
 				services.AddSingleton<INightlyMaintenanceScheduler, NightlyMaintenanceScheduler>();
