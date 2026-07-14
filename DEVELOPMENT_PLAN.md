@@ -13,7 +13,7 @@
 | P0 | Project bootstrap & tooling | 6 | ☑ 6/6 | Repo builds & runs empty WPF app |
 | P1 | Spike: WebView2 kiosk window | 7 | ☑ 7/7 | URL renders full-screen + reload on crash |
 | P2 | Config service & schema | 8 | ☑ 8/8 | Load/validate/save/migrate/backup proven |
-| P3 | Multi-display core | 8 | ☐ 0/8 | N monitors → N windows, stable-key binding |
+| P3 | Multi-display core | 8 | ☑ 8/8 | N monitors → N windows, stable-key binding |
 | P4 | Kiosk lockdown & security | 9 | ☐ 0/9 | Cannot exit; nav locked; single instance |
 | P5 | Health monitoring & recovery | 9 | ☐ 0/9 | All injected faults self-heal, no thrash |
 | P6 | Fallback & offline behaviour | 7 | ☐ 0/7 | Branded fallback + correct offline cause |
@@ -23,7 +23,7 @@
 | P10 | Auto-update & hardening | 6 | ☐ 0/6 | Signed delta update + rollback verified |
 | P11 | Remote-ready hooks (optional) | 5 | ☐ 0/5 | Config pull behind flag, no regression |
 | P12 | QA, soak & release | 8 | ☐ 0/8 | Full test matrix green; 72h soak passes |
-| **Total** | | **96** | **◐ 21/96** | Production release |
+| **Total** | | **96** | **◐ 29/96** | Production release |
 
 > Update the counts as tasks complete (e.g. `◐ 3/8`).
 
@@ -112,21 +112,21 @@
 
 **Goal:** Enumerate monitors, bind by stable key, one window per enabled screen, react to hot-plug.
 
-- [ ] **P3-1 (P0)** `IDisplayManager.Enumerate()`: list monitors with bounds, work area, DPI, resolution, orientation.
+- [x] **P3-1 (P0)** `IDisplayManager.Enumerate()`: list monitors with bounds, work area, DPI, resolution, orientation.
   - *Accept:* returns correct data on a multi-monitor machine.
-- [ ] **P3-2 (P0)** Derive **stable display key** (EDID target id / device path) with position+resolution fallback.
+- [x] **P3-2 (P0)** Derive **stable display key** (EDID target id / device path) with position+resolution fallback.
   - *Accept:* same monitor yields same key across reboots/replug.
-- [ ] **P3-3 (P0)** `KioskSupervisor`: create one `KioskWindow` per enabled screen, placed on its target monitor bounds.
+- [x] **P3-3 (P0)** `KioskSupervisor`: create one `KioskWindow` per enabled screen, placed on its target monitor bounds.
   - *Accept:* 3 monitors → 3 windows, each on the right screen with the right URL.
-- [ ] **P3-4 (P0)** Bind config `displayKey` → live monitor; unmatched enabled screens show fallback "waiting for display".
+- [x] **P3-4 (P0)** Bind config `displayKey` → live monitor; unmatched enabled screens show fallback "waiting for display".
   - *Accept:* assignments follow the monitor, not the index.
-- [ ] **P3-5 (P1)** Subscribe to `WM_DISPLAYCHANGE` / display device notifications.
+- [x] **P3-5 (P1)** Subscribe to `WM_DISPLAYCHANGE` / display device notifications.
   - *Accept:* plug/unplug fires an event within ~1s.
-- [ ] **P3-6 (P1)** Monitor removed at runtime → close/hide that window, retain assignment, log.
+- [x] **P3-6 (P1)** Monitor removed at runtime → close/hide that window, retain assignment, log.
   - *Accept:* unplugging a monitor doesn't crash; others unaffected.
-- [ ] **P3-7 (P1)** Monitor added at runtime → auto-open window if saved assignment matches, else leave for admin.
+- [x] **P3-7 (P1)** Monitor added at runtime → auto-open window if saved assignment matches, else leave for admin.
   - *Accept:* replugging restores the correct window automatically.
-- [ ] **P3-8 (P1)** Per-screen rotation/orientation + zoom applied at window/WebView2 level.
+- [x] **P3-8 (P1)** Per-screen rotation/orientation + zoom applied at window/WebView2 level.
   - *Accept:* a portrait screen and a zoomed screen render correctly.
 
 **Exit gate:** N monitors → N correctly-bound windows; survives reorder/replug.
@@ -413,5 +413,6 @@ flowchart LR
 | 2026-07-13 | P0 complete | All 6 tasks done. Solution: 3 projects (App/Core/Tests). Build: 0 errors/0 warnings (Debug + Release). Tests: 6/6 passed. Added `Serilog.Extensions.Hosting` (missing from initial pinning). Removed `Class1.cs` stub. DI host + Serilog rolling file + EventLog sink wired. `Directory.Packages.props` central versioning active. `.editorconfig`/`.gitignore`/`Directory.Build.props`/`README.md`/`.github/workflows/ci.yml` all present. | — |
 | 2026-07-14 | P1 complete | Implemented `KioskWindow` full-screen borderless top-most on primary monitor with embedded WebView2 and shared environment provider. WebView2 user-data path: `%ProgramData%\OrderBuddy\ScreenManager\webview2`. Applied settings lockdown (context menu/devtools/statusbar/zoom disabled). Added autoplay arg `--autoplay-policy=no-user-gesture-required`. Added `NavigationCompleted` logging with success/error status. Added `ProcessFailed` recovery (reinitialize + reload) and fixed crash-path cleanup bug discovered during forced browser-process kill test. Validation: Build 0 errors/0 warnings, tests 6/6 passed. Runtime evidence in logs: successful navigation (HTTP 200), forced process failure detected and recovered. Baseline metrics: ColdStartMs 1305, idle WorkingSet ~95.38 MB. | — |
 | 2026-07-14 | P2 complete | Replaced config stub with full `ConfigService` + schema models. Implemented load/create-default, validation+normalization diagnostics, atomic save (`File.Replace`), backup restore fallback, legacy v1 migration path, debounced hot-reload (`FileSystemWatcher` + `ConfigChanged`), and PBKDF2 PIN hashing protection. Wired app DI to use real `ConfigService` with `%ProgramData%\OrderBuddy\ScreenManager\config.json`. Validation via tests: round-trip serialization, missing config default creation, invalid value normalization, atomic save/backup, corrupt primary fallback to backup, legacy migration, hot-reload event, and no plaintext PIN persistence. Final validation: Release build 0 errors/0 warnings, tests 14/14 passed. | — |
+| 2026-07-14 | P3 complete | Implemented multi-display architecture: enriched `IDisplayManager` with monitor metadata + change event, added stable-key planner (`DisplayBindingPlanner`), introduced `WindowsDisplayManager` (real monitor enumeration + display-settings subscription), added `KioskSupervisor` (one window per enabled screen, reconcile on config/display changes), and upgraded `KioskWindow` to per-screen binding with placement by monitor bounds, waiting overlay for unmatched `displayKey`, and per-screen zoom/rotation application. Validation: Debug/Release build 0 errors/0 warnings; tests 18/18 passed including new P3 binding tests (stable-key determinism, reorder-safe binding, missing-display waiting, replug recovery). Runtime logs confirmed reconciliation with 2 enabled screens, correct placement, waiting overlay for missing display, and applied zoom/rotation for bound screen. | — |
 
 > Add a row whenever a task completes, a decision changes, or a baseline/metric is recorded (e.g. P1-7 cold-start numbers).

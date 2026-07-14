@@ -4,6 +4,7 @@ using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using OrderBuddy.ScreenManager.App.Browser;
+using OrderBuddy.ScreenManager.App.Display;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using OrderBuddy.ScreenManager.Core.Health;
@@ -15,9 +16,10 @@ namespace OrderBuddy.ScreenManager.App;
 /// <summary>
 /// Interaction logic for App.xaml
 /// </summary>
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
 	private IHost? _host;
+	private KioskSupervisor? _supervisor;
 
 	protected override async void OnStartup(StartupEventArgs e)
 	{
@@ -36,22 +38,25 @@ public partial class App : Application
 				services.AddSingleton(ConfigServiceOptions.FromRootDirectory(bootstrap.ProgramDataRoot));
 				services.AddSingleton<IWebViewEnvironmentProvider, WebViewEnvironmentProvider>();
 				services.AddSingleton<IConfigService, ConfigService>();
-				services.AddSingleton<IDisplayManager, PlaceholderDisplayManager>();
+				services.AddSingleton<IDisplayManager, WindowsDisplayManager>();
 				services.AddSingleton<IHealthMonitor, PlaceholderHealthMonitor>();
 				services.AddSingleton<Serilog.ILogger>(Log.Logger);
-				services.AddSingleton<KioskWindow>();
+				services.AddSingleton<KioskSupervisor>();
+				services.AddTransient<KioskWindow>();
 			})
 			.Build();
 
 		await _host.StartAsync();
 
-		var kioskWindow = _host.Services.GetRequiredService<KioskWindow>();
-		kioskWindow.Show();
+		_supervisor = _host.Services.GetRequiredService<KioskSupervisor>();
+		_supervisor.Start();
 		Log.Information("OrderBuddy Screen Manager started. Environment initialized.");
 	}
 
 	protected override async void OnExit(ExitEventArgs e)
 	{
+		_supervisor?.Dispose();
+
 		if (_host is not null)
 		{
 			await _host.StopAsync();

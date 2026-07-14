@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using OrderBuddy.ScreenManager.App.Browser;
@@ -18,10 +19,13 @@ public partial class KioskWindow : Window
     private readonly KioskBrowserOptions _browserOptions;
     private readonly IWebViewEnvironmentProvider _environmentProvider;
     private readonly Serilog.ILogger _logger;
-    private readonly Stopwatch _coldStartStopwatch = Stopwatch.StartNew();
+    private readonly Stopwatch _coldStartStopwatch = new();
 
     private WebView2? _webView;
     private int _processFailureCount;
+    private ScreenConfig? _activeScreen;
+    private DisplayInfo? _activeDisplay;
+    private bool _isLoaded;
 
     public KioskWindow(
         KioskBrowserOptions browserOptions,
@@ -45,17 +49,80 @@ public partial class KioskWindow : Window
         Closed += OnClosed;
     }
 
+    public void ApplyBinding(ScreenConfig screen, DisplayInfo display)
+    {
+        _activeScreen = screen;
+        _activeDisplay = display;
+        WaitingOverlay.Visibility = Visibility.Collapsed;
+
+        ApplyDisplayPlacement(display);
+
+        if (_isLoaded)
+        {
+            _ = InitializeOrReinitializeWebViewAsync();
+        }
+    }
+
+    public void ShowWaitingForDisplay(ScreenConfig screen, DisplayInfo fallbackDisplay)
+    {
+        _activeScreen = screen;
+        _activeDisplay = fallbackDisplay;
+
+        ApplyDisplayPlacement(fallbackDisplay);
+        CleanupWebView();
+
+        WaitingTitle.Text = $"Waiting for assigned display ({screen.Name})";
+        WaitingSubtitle.Text = $"Display key '{screen.DisplayKey}' not detected. Reconnect the monitor to auto-start.";
+        WaitingOverlay.Visibility = Visibility.Visible;
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        ApplyPrimaryDisplayFullscreen();
-        await InitializeOrReinitializeWebViewAsync();
+        _isLoaded = true;
+
+        if (_activeScreen is not null && _activeDisplay is not null)
+        {
+            await InitializeOrReinitializeWebViewAsync();
+            return;
+        }
+
+        var primaryDisplay = new DisplayInfo(
+            StableKey: "display:primary:fallback",
+            DeviceName: "Primary",
+            X: 0,
+            Y: 0,
+            Width: (int)SystemParameters.PrimaryScreenWidth,
+            Height: (int)SystemParameters.PrimaryScreenHeight,
+            WorkAreaWidth: (int)SystemParameters.WorkArea.Width,
+            WorkAreaHeight: (int)SystemParameters.WorkArea.Height,
+            Orientation: SystemParameters.PrimaryScreenWidth >= SystemParameters.PrimaryScreenHeight ? "Landscape" : "Portrait",
+            DpiScaleX: 1.0,
+            DpiScaleY: 1.0,
+            IsPrimary: true);
+
+        ShowWaitingForDisplay(
+            new ScreenConfig
+            {
+                Id = "unassigned",
+                Name = "Unassigned",
+                DisplayKey = "",
+                Url = _browserOptions.StartUrl
+            },
+            primaryDisplay);
     }
 
     private async Task InitializeOrReinitializeWebViewAsync()
     {
+        if (_activeScreen is null || _activeDisplay is null)
+        {
+            return;
+        }
+
         try
         {
+            _coldStartStopwatch.Restart();
             CleanupWebView();
+            WaitingOverlay.Visibility = Visibility.Collapsed;
 
             var webView = new WebView2();
             RootGrid.Children.Add(webView);
@@ -67,11 +134,19 @@ public partial class KioskWindow : Window
             ConfigureWebViewSettings(webView.CoreWebView2.Settings);
             HookWebViewEvents(webView.CoreWebView2);
 
-            webView.CoreWebView2.Navigate(_browserOptions.StartUrl);
+            ApplyZoomAndRotation(webView, _activeScreen);
+            _logger.Information(
+                "Applied per-screen presentation settings. ScreenId: {ScreenId}, ZoomPercent: {ZoomPercent}, RotationDegrees: {RotationDegrees}",
+                _activeScreen.Id,
+                _activeScreen.ZoomPercent,
+                _activeScreen.RotationDegrees);
+            webView.CoreWebView2.Navigate(_activeScreen.Url);
 
             _logger.Information(
-                "Kiosk WebView2 initialized. StartUrl: {StartUrl}, ColdStartMs: {ColdStartMs}",
-                _browserOptions.StartUrl,
+                "Kiosk WebView2 initialized. ScreenId: {ScreenId}, DisplayKey: {DisplayKey}, StartUrl: {StartUrl}, ColdStartMs: {ColdStartMs}",
+                _activeScreen.Id,
+                _activeDisplay.StableKey,
+                _activeScreen.Url,
                 _coldStartStopwatch.ElapsedMilliseconds);
         }
         catch (Exception ex)
@@ -80,18 +155,34 @@ public partial class KioskWindow : Window
         }
     }
 
-    private void ApplyPrimaryDisplayFullscreen()
+    private static void ApplyZoomAndRotation(WebView2 webView, ScreenConfig screen)
     {
-        Left = 0;
-        Top = 0;
-        Width = SystemParameters.PrimaryScreenWidth;
-        Height = SystemParameters.PrimaryScreenHeight;
+        webView.ZoomFactor = Math.Clamp(screen.ZoomPercent / 100.0, 0.25, 5.0);
+
+        webView.LayoutTransform = screen.RotationDegrees switch
+        {
+            90 => new RotateTransform(90),
+            180 => new RotateTransform(180),
+            270 => new RotateTransform(270),
+            _ => Transform.Identity
+        };
+    }
+
+    private void ApplyDisplayPlacement(DisplayInfo display)
+    {
+        Left = display.X;
+        Top = display.Y;
+        Width = display.Width;
+        Height = display.Height;
         WindowState = WindowState.Normal;
 
         _logger.Information(
-            "Kiosk window fullscreen applied on primary monitor. Width: {Width}, Height: {Height}",
-            Width,
-            Height);
+            "Kiosk window placement applied. DisplayKey: {DisplayKey}, X: {X}, Y: {Y}, Width: {Width}, Height: {Height}",
+            display.StableKey,
+            display.X,
+            display.Y,
+            display.Width,
+            display.Height);
     }
 
     private void ConfigureWebViewSettings(CoreWebView2Settings settings)
@@ -120,7 +211,8 @@ public partial class KioskWindow : Window
     {
         _processFailureCount++;
         _logger.Warning(
-            "WebView2 process failure detected. Kind: {FailureKind}, Reason: {Reason}, Count: {Count}. Reinitializing.",
+            "WebView2 process failure detected. ScreenId: {ScreenId}, Kind: {FailureKind}, Reason: {Reason}, Count: {Count}. Reinitializing.",
+            _activeScreen?.Id,
             e.ProcessFailedKind,
             e.Reason,
             _processFailureCount);

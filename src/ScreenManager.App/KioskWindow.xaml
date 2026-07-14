@@ -8,5 +8,23 @@
         Topmost="True"
         ShowInTaskbar="False"
         Background="Black">
-    <Grid x:Name="RootGrid" Background="Black" />
+    <Grid x:Name="RootGrid" Background="Black">
+        <Border x:Name="WaitingOverlay"
+                Background="#CC111111"
+                Visibility="Collapsed">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock x:Name="WaitingTitle"
+                           FontSize="28"
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           Text="Waiting for assigned display" />
+                <TextBlock x:Name="WaitingSubtitle"
+                           Margin="0,10,0,0"
+                           FontSize="16"
+                           Foreground="#DDDDDD"
+                           HorizontalAlignment="Center"
+                           Text="Screen binding will auto-recover when the monitor is connected." />
+            </StackPanel>
+        </Border>
+    </Grid>
 </Window>
