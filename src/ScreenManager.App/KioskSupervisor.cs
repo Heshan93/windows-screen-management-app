@@ -35,6 +35,20 @@ public sealed class KioskSupervisor : IDisposable
         ReconcileWindows("initial-start");
     }
 
+    public void ReloadAllWindows(string reason)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        foreach (var (screenId, window) in _windows)
+        {
+            window.RequestReload(reason);
+            _logger.Information("Requested reload for screen {ScreenId}. Reason: {Reason}", screenId, reason);
+        }
+    }
+
     private void OnDisplaysChanged(object? sender, DisplaysChangedEventArgs e)
     {
         _ = e;

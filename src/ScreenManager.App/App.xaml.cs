@@ -26,6 +26,7 @@ public partial class App : System.Windows.Application
 	private KioskSupervisor? _supervisor;
 	private IKeyboardLockService? _keyboardLockService;
 	private IConfigService? _configService;
+	private INightlyMaintenanceScheduler? _nightlyMaintenanceScheduler;
 
 	protected override async void OnStartup(StartupEventArgs e)
 	{
@@ -54,10 +55,12 @@ public partial class App : System.Windows.Application
 				services.AddSingleton<IWebViewEnvironmentProvider, WebViewEnvironmentProvider>();
 				services.AddSingleton<IConfigService, ConfigService>();
 				services.AddSingleton<IDisplayManager, WindowsDisplayManager>();
+				services.AddSingleton<ISystemClock, SystemClock>();
 				services.AddSingleton<IHealthMonitor, PlaceholderHealthMonitor>();
 				services.AddSingleton<IKeyboardLockService, WindowsKeyboardLockService>();
 				services.AddSingleton<Serilog.ILogger>(Log.Logger);
 				services.AddSingleton<KioskSupervisor>();
+				services.AddSingleton<INightlyMaintenanceScheduler, NightlyMaintenanceScheduler>();
 				services.AddTransient<KioskWindow>();
 			})
 			.Build();
@@ -66,17 +69,34 @@ public partial class App : System.Windows.Application
 
 		_configService = _host.Services.GetRequiredService<IConfigService>();
 		_keyboardLockService = _host.Services.GetRequiredService<IKeyboardLockService>();
+		var healthMonitor = _host.Services.GetRequiredService<IHealthMonitor>();
+		healthMonitor.ApplySettings(
+			_configService.CurrentConfig.General.RetryBackoffSec,
+			_configService.CurrentConfig.General.OfflineTimeoutSec,
+			_configService.CurrentConfig.General.OfflineTimeoutSec);
+
 		ApplyKeyboardLock(_configService.CurrentConfig.General.LockSystemKeys);
 		_configService.ConfigChanged += OnConfigChanged;
 
 		_supervisor = _host.Services.GetRequiredService<KioskSupervisor>();
+		_nightlyMaintenanceScheduler = _host.Services.GetRequiredService<INightlyMaintenanceScheduler>();
 		_supervisor.Start();
+		_nightlyMaintenanceScheduler.Start();
 		Log.Information("OrderBuddy Screen Manager started. Environment initialized.");
 	}
 
 	private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
 	{
 		ApplyKeyboardLock(e.NewConfig.General.LockSystemKeys);
+
+		if (_host is not null)
+		{
+			var healthMonitor = _host.Services.GetRequiredService<IHealthMonitor>();
+			healthMonitor.ApplySettings(
+				e.NewConfig.General.RetryBackoffSec,
+				e.NewConfig.General.OfflineTimeoutSec,
+				e.NewConfig.General.OfflineTimeoutSec);
+		}
 	}
 
 	private void ApplyKeyboardLock(bool enabled)
@@ -103,6 +123,13 @@ public partial class App : System.Windows.Application
 		}
 
 		_keyboardLockService?.Stop();
+		_nightlyMaintenanceScheduler?.Stop();
+
+		if (_nightlyMaintenanceScheduler is IDisposable disposableNightly)
+		{
+			disposableNightly.Dispose();
+		}
+
 		if (_keyboardLockService is IDisposable disposableKeyboardLock)
 		{
 			disposableKeyboardLock.Dispose();

@@ -1,6 +1,11 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Http;
+using System.Net.NetworkInformation;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using OrderBuddy.ScreenManager.App.Browser;
@@ -17,10 +22,21 @@ namespace OrderBuddy.ScreenManager.App;
 /// </summary>
 public partial class KioskWindow : Window
 {
+    private const string HeartbeatScript =
+        "(function(){if(window.__obHbInstalled){return;}window.__obHbInstalled=true;" +
+        "function postHb(){if(window.chrome&&window.chrome.webview){window.chrome.webview.postMessage({type:'heartbeat',ts:Date.now()});}}" +
+        "postHb();setInterval(postHb,5000);})();";
+
     private readonly KioskBrowserOptions _browserOptions;
     private readonly IWebViewEnvironmentProvider _environmentProvider;
     private readonly Serilog.ILogger _logger;
+    private readonly IConfigService _configService;
+    private readonly IHealthMonitor _healthMonitor;
+    private readonly ISystemClock _clock;
     private readonly Stopwatch _coldStartStopwatch = new();
+    private readonly DispatcherTimer _healthTickTimer;
+    private readonly DispatcherTimer _reloadIntervalTimer;
+    private readonly HttpClient _connectivityClient = new() { Timeout = TimeSpan.FromSeconds(5) };
 
     private WebView2? _webView;
     private int _processFailureCount;
@@ -28,6 +44,9 @@ public partial class KioskWindow : Window
     private DisplayInfo? _activeDisplay;
     private bool _isLoaded;
     private bool _allowClose;
+    private bool _recoveryInProgress;
+    private DateTimeOffset _lastHealthWarningUtc = DateTimeOffset.MinValue;
+    private int _memoryWatchdogThresholdMb;
 
     public KioskWindow(
         KioskBrowserOptions browserOptions,
@@ -35,16 +54,35 @@ public partial class KioskWindow : Window
         Serilog.ILogger logger,
         IConfigService configService,
         IDisplayManager displayManager,
-        IHealthMonitor healthMonitor)
+        IHealthMonitor healthMonitor,
+        ISystemClock clock)
     {
         _browserOptions = browserOptions;
         _environmentProvider = environmentProvider;
         _logger = logger;
+        _configService = configService;
+        _healthMonitor = healthMonitor;
+        _clock = clock;
 
         // Keep these dependencies in the constructor to prove P0 DI contracts remain valid.
-        _ = configService;
         _ = displayManager;
-        _ = healthMonitor;
+
+        _healthTickTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2)
+        };
+        _healthTickTimer.Tick += OnHealthTick;
+
+        _reloadIntervalTimer = new DispatcherTimer();
+        _reloadIntervalTimer.Tick += OnReloadIntervalTick;
+
+        _memoryWatchdogThresholdMb = ResolveMemoryWatchdogThresholdMb();
+        _healthMonitor.ApplySettings(
+            _configService.CurrentConfig.General.RetryBackoffSec,
+            _configService.CurrentConfig.General.OfflineTimeoutSec,
+            _configService.CurrentConfig.General.OfflineTimeoutSec);
+
+        _configService.ConfigChanged += OnConfigChanged;
 
         InitializeComponent();
         Loaded += OnLoaded;
@@ -58,11 +96,35 @@ public partial class KioskWindow : Window
         Close();
     }
 
+    public void RequestReload(string reason)
+    {
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            if (_activeScreen is null)
+            {
+                return;
+            }
+
+            _logger.Information("Reload requested for screen {ScreenId}. Reason: {Reason}", _activeScreen.Id, reason);
+
+            if (_webView?.CoreWebView2 is null)
+            {
+                await InitializeOrReinitializeWebViewAsync();
+                return;
+            }
+
+            _webView.CoreWebView2.Navigate(_activeScreen.Url);
+        });
+    }
+
     public void ApplyBinding(ScreenConfig screen, DisplayInfo display)
     {
         _activeScreen = screen;
         _activeDisplay = display;
-        WaitingOverlay.Visibility = Visibility.Collapsed;
+
+        _healthMonitor.EnsureScreen(screen.Id);
+        ConfigureReloadInterval(screen);
+        HideFallbackOverlay();
 
         ApplyDisplayPlacement(display);
 
@@ -88,6 +150,7 @@ public partial class KioskWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _isLoaded = true;
+        _healthTickTimer.Start();
 
         if (_activeScreen is not null && _activeDisplay is not null)
         {
@@ -131,7 +194,7 @@ public partial class KioskWindow : Window
         {
             _coldStartStopwatch.Restart();
             CleanupWebView();
-            WaitingOverlay.Visibility = Visibility.Collapsed;
+            HideFallbackOverlay();
 
             var webView = new WebView2();
             RootGrid.Children.Add(webView);
@@ -142,6 +205,7 @@ public partial class KioskWindow : Window
 
             ConfigureWebViewSettings(webView.CoreWebView2.Settings);
             HookWebViewEvents(webView.CoreWebView2);
+            await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(HeartbeatScript);
 
             ApplyZoomAndRotation(webView, _activeScreen);
             _logger.Information(
@@ -161,6 +225,15 @@ public partial class KioskWindow : Window
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to initialize kiosk WebView2.");
+            if (_activeScreen is not null)
+            {
+                var snapshot = _healthMonitor.RecordFailure(
+                    _activeScreen.Id,
+                    ScreenFailureType.Manual,
+                    "WebView2 initialization failed",
+                    _clock.UtcNow);
+                ShowRecoveryOverlay(snapshot, "Browser initialization failed.");
+            }
         }
     }
 
@@ -213,6 +286,7 @@ public partial class KioskWindow : Window
         core.NewWindowRequested += OnNewWindowRequested;
         core.PermissionRequested += OnPermissionRequested;
         core.ServerCertificateErrorDetected += OnServerCertificateErrorDetected;
+        core.WebMessageReceived += OnWebMessageReceived;
     }
 
     private void UnhookWebViewEvents(CoreWebView2 core)
@@ -223,34 +297,66 @@ public partial class KioskWindow : Window
         core.NewWindowRequested -= OnNewWindowRequested;
         core.PermissionRequested -= OnPermissionRequested;
         core.ServerCertificateErrorDetected -= OnServerCertificateErrorDetected;
+        core.WebMessageReceived -= OnWebMessageReceived;
     }
 
     private async void OnWebViewProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
     {
         _processFailureCount++;
         _logger.Warning(
-            "WebView2 process failure detected. ScreenId: {ScreenId}, Kind: {FailureKind}, Reason: {Reason}, Count: {Count}. Reinitializing.",
+            "WebView2 process failure detected. ScreenId: {ScreenId}, Kind: {FailureKind}, Reason: {Reason}, Count: {Count}.",
             _activeScreen?.Id,
             e.ProcessFailedKind,
             e.Reason,
             _processFailureCount);
 
-        await InitializeOrReinitializeWebViewAsync();
+        if (_activeScreen is null)
+        {
+            return;
+        }
+
+        var snapshot = _healthMonitor.RecordFailure(
+            _activeScreen.Id,
+            ScreenFailureType.ProcessCrash,
+            $"{e.ProcessFailedKind}: {e.Reason}",
+            _clock.UtcNow);
+
+        ShowRecoveryOverlay(snapshot, "Browser process crashed. Waiting for recovery window.");
+        await AttemptRecoveryIfDueAsync("process-failed");
     }
 
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
+        if (_activeScreen is null)
+        {
+            return;
+        }
+
         if (e.IsSuccess)
         {
+            var source = _webView?.CoreWebView2?.Source ?? _activeScreen.Url;
+            _healthMonitor.RecordNavigationSuccess(_activeScreen.Id, source, _clock.UtcNow);
+            HideFallbackOverlay();
+
             _logger.Information(
-                "Navigation completed successfully. Source: {Source}, HttpStatusCode: {HttpStatusCode}",
-                _webView?.CoreWebView2?.Source,
+                "Navigation completed successfully. ScreenId: {ScreenId}, Source: {Source}, HttpStatusCode: {HttpStatusCode}",
+                _activeScreen.Id,
+                source,
                 e.HttpStatusCode);
             return;
         }
 
+        var snapshot = _healthMonitor.RecordFailure(
+            _activeScreen.Id,
+            ScreenFailureType.Navigation,
+            $"{e.WebErrorStatus} ({e.HttpStatusCode})",
+            _clock.UtcNow);
+
+        ShowRecoveryOverlay(snapshot, "Navigation failed. Applying backoff retry.");
+
         _logger.Warning(
-            "Navigation failed. Source: {Source}, WebErrorStatus: {WebErrorStatus}, HttpStatusCode: {HttpStatusCode}",
+            "Navigation failed. ScreenId: {ScreenId}, Source: {Source}, WebErrorStatus: {WebErrorStatus}, HttpStatusCode: {HttpStatusCode}",
+            _activeScreen.Id,
             _webView?.CoreWebView2?.Source,
             e.WebErrorStatus,
             e.HttpStatusCode);
@@ -344,6 +450,287 @@ public partial class KioskWindow : Window
             allow ? "AlwaysAllow" : "Cancel");
     }
 
+    private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        if (_activeScreen is null)
+        {
+            return;
+        }
+
+        try
+        {
+            using var json = JsonDocument.Parse(e.WebMessageAsJson);
+            if (!json.RootElement.TryGetProperty("type", out var typeElement))
+            {
+                return;
+            }
+
+            if (!typeElement.GetString()?.Equals("heartbeat", StringComparison.OrdinalIgnoreCase) ?? true)
+            {
+                return;
+            }
+
+            _healthMonitor.RecordHeartbeat(_activeScreen.Id, _clock.UtcNow);
+        }
+        catch (JsonException)
+        {
+            // Ignore non-JSON payloads from host pages.
+        }
+    }
+
+    private async void OnHealthTick(object? sender, EventArgs e)
+    {
+        if (_activeScreen is null)
+        {
+            return;
+        }
+
+        var now = _clock.UtcNow;
+        var heartbeatSnapshot = _healthMonitor.EvaluateHeartbeatTimeout(_activeScreen.Id, now);
+        if (heartbeatSnapshot.State is ScreenHealthState.Recovering or ScreenHealthState.Offline)
+        {
+            ShowRecoveryOverlay(heartbeatSnapshot, "Heartbeat missing. Waiting for recovery retry.");
+        }
+
+        if (_memoryWatchdogThresholdMb > 0)
+        {
+            var workingSetMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
+            if (workingSetMb >= _memoryWatchdogThresholdMb)
+            {
+                var memorySnapshot = _healthMonitor.RecordMemoryPressure(
+                    _activeScreen.Id,
+                    workingSetMb,
+                    _memoryWatchdogThresholdMb,
+                    now);
+
+                ShowRecoveryOverlay(memorySnapshot, "Memory watchdog triggered. Scheduling controlled reload.");
+            }
+        }
+
+        await AttemptRecoveryIfDueAsync("health-tick");
+    }
+
+    private void OnReloadIntervalTick(object? sender, EventArgs e)
+    {
+        if (_activeScreen is null || _webView?.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        var snapshot = _healthMonitor.GetSnapshot(_activeScreen.Id);
+        if (snapshot.State != ScreenHealthState.Online)
+        {
+            _logger.Debug(
+                "Skipped periodic reload for screen {ScreenId} because state is {State}.",
+                _activeScreen.Id,
+                snapshot.State);
+            return;
+        }
+
+        _webView.CoreWebView2.Navigate(_activeScreen.Url);
+        _logger.Information(
+            "Periodic reload triggered. ScreenId: {ScreenId}, IntervalSec: {IntervalSec}",
+            _activeScreen.Id,
+            _activeScreen.ReloadIntervalSec);
+    }
+
+    private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
+    {
+        _healthMonitor.ApplySettings(
+            e.NewConfig.General.RetryBackoffSec,
+            e.NewConfig.General.OfflineTimeoutSec,
+            e.NewConfig.General.OfflineTimeoutSec);
+
+        _memoryWatchdogThresholdMb = ResolveMemoryWatchdogThresholdMb();
+
+        if (_activeScreen is null)
+        {
+            return;
+        }
+
+        var updatedScreen = e.NewConfig.Screens.FirstOrDefault(s =>
+            s.Id.Equals(_activeScreen.Id, StringComparison.OrdinalIgnoreCase));
+
+        if (updatedScreen is null)
+        {
+            return;
+        }
+
+        _activeScreen = updatedScreen;
+        ConfigureReloadInterval(updatedScreen);
+    }
+
+    private async Task AttemptRecoveryIfDueAsync(string reason)
+    {
+        if (_activeScreen is null)
+        {
+            return;
+        }
+
+        if (!_healthMonitor.ShouldAttemptRecovery(_activeScreen.Id, _clock.UtcNow))
+        {
+            return;
+        }
+
+        await AttemptRecoveryAsync(reason);
+    }
+
+    private async Task AttemptRecoveryAsync(string reason)
+    {
+        if (_activeScreen is null || _recoveryInProgress)
+        {
+            return;
+        }
+
+        _recoveryInProgress = true;
+
+        try
+        {
+            var now = _clock.UtcNow;
+            var reachable = await ProbeConnectivityAsync(_activeScreen.Url);
+            var connectivitySnapshot = _healthMonitor.RecordConnectivity(
+                _activeScreen.Id,
+                reachable,
+                now,
+                reachable ? "probe succeeded" : "probe failed");
+
+            if (!reachable)
+            {
+                ShowRecoveryOverlay(connectivitySnapshot, "Network is unavailable. Holding on fallback with slow probe.");
+                return;
+            }
+
+            if (_webView?.CoreWebView2 is null)
+            {
+                await InitializeOrReinitializeWebViewAsync();
+            }
+            else
+            {
+                _webView.CoreWebView2.Navigate(_activeScreen.Url);
+            }
+
+            _logger.Information(
+                "Recovery attempt executed. ScreenId: {ScreenId}, Reason: {Reason}",
+                _activeScreen.Id,
+                reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Recovery attempt failed. Reason: {Reason}", reason);
+            var snapshot = _healthMonitor.RecordFailure(
+                _activeScreen.Id,
+                ScreenFailureType.Manual,
+                $"Recovery execution failed ({reason})",
+                _clock.UtcNow);
+            ShowRecoveryOverlay(snapshot, "Recovery attempt failed. Backing off.");
+        }
+        finally
+        {
+            _recoveryInProgress = false;
+        }
+    }
+
+    private async Task<bool> ProbeConnectivityAsync(string url)
+    {
+        if (!NetworkInterface.GetIsNetworkAvailable())
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var targetUri))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Head, targetUri);
+            using var response = await _connectivityClient.SendAsync(request);
+
+            if (response.StatusCode == HttpStatusCode.MethodNotAllowed)
+            {
+                using var getRequest = new HttpRequestMessage(HttpMethod.Get, targetUri);
+                using var getResponse = await _connectivityClient.SendAsync(getRequest);
+                return getResponse.IsSuccessStatusCode;
+            }
+
+            return response.IsSuccessStatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException)
+        {
+            return false;
+        }
+    }
+
+    private void ShowRecoveryOverlay(ScreenHealthSnapshot snapshot, string message)
+    {
+        if (_activeScreen is null)
+        {
+            return;
+        }
+
+        WaitingTitle.Text = $"Recovering { _activeScreen.Name }";
+
+        var nextAttempt = snapshot.NextRecoveryAttemptUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "now";
+        WaitingSubtitle.Text = $"{message} Next attempt: {nextAttempt}.";
+        WaitingOverlay.Visibility = Visibility.Visible;
+
+        var now = _clock.UtcNow;
+        if ((now - _lastHealthWarningUtc).TotalSeconds < 5)
+        {
+            return;
+        }
+
+        _lastHealthWarningUtc = now;
+        _logger.Warning(
+            "Screen health transition. ScreenId: {ScreenId}, State: {State}, ConsecutiveFailures: {ConsecutiveFailures}, NextAttemptUtc: {NextAttemptUtc}, Reason: {Reason}",
+            snapshot.ScreenId,
+            snapshot.State,
+            snapshot.ConsecutiveFailures,
+            snapshot.NextRecoveryAttemptUtc,
+            snapshot.LastReason);
+    }
+
+    private void HideFallbackOverlay()
+    {
+        if (WaitingOverlay.Visibility == Visibility.Visible)
+        {
+            WaitingOverlay.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void ConfigureReloadInterval(ScreenConfig screen)
+    {
+        if (screen.ReloadIntervalSec <= 0)
+        {
+            _reloadIntervalTimer.Stop();
+            return;
+        }
+
+        _reloadIntervalTimer.Interval = TimeSpan.FromSeconds(Math.Clamp(screen.ReloadIntervalSec, 5, 86_400));
+        _reloadIntervalTimer.Start();
+
+        _logger.Information(
+            "Per-screen reload interval configured. ScreenId: {ScreenId}, IntervalSec: {IntervalSec}",
+            screen.Id,
+            screen.ReloadIntervalSec);
+    }
+
+    private static int ResolveMemoryWatchdogThresholdMb()
+    {
+        var raw = Environment.GetEnvironmentVariable("ORDERBUDDY_MEMORY_WATCHDOG_MB");
+        if (!int.TryParse(raw, out var threshold))
+        {
+            return 0;
+        }
+
+        return Math.Clamp(threshold, 128, 16_384);
+    }
+
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         if (_allowClose)
@@ -357,6 +744,10 @@ public partial class KioskWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        _healthTickTimer.Stop();
+        _reloadIntervalTimer.Stop();
+        _connectivityClient.Dispose();
+        _configService.ConfigChanged -= OnConfigChanged;
         CleanupWebView();
     }
 
