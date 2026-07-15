@@ -75,7 +75,7 @@ public sealed class P2ConfigServiceTests
 
         service.CurrentConfig.General.OfflineTimeoutSec.Should().Be(20);
         service.CurrentConfig.Screens[0].Url.Should().Be("https://example.org");
-        service.CurrentConfig.Screens[0].ZoomPercent.Should().Be(100);
+        service.CurrentConfig.Screens[0].ZoomPercent.Should().Be(500);
         service.CurrentConfig.Screens[0].RotationDegrees.Should().Be(0);
         service.CurrentConfig.General.AdminPinHash.Should().StartWith("PBKDF2$");
         service.LastDiagnostics.Should().NotBeEmpty();
@@ -242,6 +242,50 @@ public sealed class P2ConfigServiceTests
         var changed = await tcs.Task;
         changed.Screens.Should().ContainSingle();
         changed.Screens[0].ZoomPercent.Should().Be(70);
+
+        Directory.Delete(rootDir, true);
+    }
+
+    [Fact]
+    public async Task SaveAsync_NoChanges_DoesNotRaiseConfigChangedEvent()
+    {
+        var (rootDir, options) = CreateOptions();
+        using var service = new ConfigService(options);
+
+        var raised = false;
+        service.ConfigChanged += (_, _) => raised = true;
+
+        await service.SaveAsync(service.CurrentConfig);
+
+        raised.Should().BeFalse("no-op saves should not trigger config change fan-out");
+        service.LastDiagnostics.Should().Contain(d => d.Contains("save skipped", StringComparison.OrdinalIgnoreCase));
+
+        Directory.Delete(rootDir, true);
+    }
+
+    [Fact]
+    public void Load_ZoomBelowMinimum_ClampsTo25()
+    {
+        var (rootDir, options) = CreateOptions();
+        var config = AppConfig.CreateDefault() with
+        {
+            Screens =
+            [
+                new ScreenConfig
+                {
+                    Id = "screen-1",
+                    Url = "https://example.org",
+                    ZoomPercent = 20
+                }
+            ]
+        };
+
+        File.WriteAllText(options.ConfigFilePath, JsonSerializer.Serialize(config));
+
+        using var service = new ConfigService(options);
+
+        service.CurrentConfig.Screens[0].ZoomPercent.Should().Be(25);
+        service.LastDiagnostics.Should().Contain(d => d.Contains("clamped to 25", StringComparison.OrdinalIgnoreCase));
 
         Directory.Delete(rootDir, true);
     }

@@ -90,12 +90,22 @@ public sealed record FallbackConfig
 
 public sealed class ConfigChangedEventArgs : EventArgs
 {
-    public ConfigChangedEventArgs(AppConfig newConfig)
+    public ConfigChangedEventArgs(
+        AppConfig newConfig,
+        string source = "unknown",
+        string? changeId = null,
+        IReadOnlyList<string>? diagnostics = null)
     {
         NewConfig = newConfig;
+        Source = source;
+        ChangeId = string.IsNullOrWhiteSpace(changeId) ? Guid.NewGuid().ToString("N") : changeId;
+        Diagnostics = diagnostics ?? [];
     }
 
     public AppConfig NewConfig { get; }
+    public string Source { get; }
+    public string ChangeId { get; }
+    public IReadOnlyList<string> Diagnostics { get; }
 }
 
 public sealed record ConfigServiceOptions(string ConfigFilePath, string BackupFilePath)

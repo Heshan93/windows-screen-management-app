@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Text.Json;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -32,6 +33,8 @@ public partial class KioskWindow : Window
         "(function(){if(window.__obInstalled){return;}window.__obInstalled=true;" +
         "function post(m){if(window.chrome&&window.chrome.webview){window.chrome.webview.postMessage(m);}}" +
         "function hb(){post({type:'heartbeat',ts:Date.now()});}hb();setInterval(hb,5000);" +
+        "window.addEventListener('error',function(e){post({type:'page-error',msg:String(e&&e.message||''),src:String(e&&e.filename||''),line:(e&&e.lineno)||0,col:(e&&e.colno)||0});},true);" +
+        "window.addEventListener('unhandledrejection',function(e){var reason='';try{reason=(e&&e.reason&&e.reason.message)?e.reason.message:String(e&&e.reason);}catch(_){reason='unknown';}post({type:'page-unhandledrejection',msg:reason});},true);" +
         "var taps=[];" +
         "function cue(x,y){try{var d=document.createElement('div');d.style.cssText='position:fixed;z-index:2147483647;width:90px;height:90px;border-radius:50%;pointer-events:none;left:'+(x-45)+'px;top:'+(y-45)+'px;background:rgba(0,150,255,0.45);border:2px solid #fff;transition:opacity .5s,transform .5s;opacity:1;transform:scale(0.6);';(document.body||document.documentElement).appendChild(d);requestAnimationFrame(function(){d.style.opacity='0';d.style.transform='scale(1.5)';});setTimeout(function(){d.remove();},520);}catch(e){}}" +
         "function badge(n){try{var b=document.getElementById('__obAdminBadge');if(!b){b=document.createElement('div');b.id='__obAdminBadge';b.style.cssText='position:fixed;z-index:2147483647;top:8px;right:8px;pointer-events:none;background:#0096ff;color:#fff;font:600 13px sans-serif;padding:4px 10px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.4);';(document.body||document.documentElement).appendChild(b);}b.textContent='Admin '+n+'/5';b.style.opacity='1';clearTimeout(b.__t);b.__t=setTimeout(function(){b.style.transition='opacity .4s';b.style.opacity='0';},1400);}catch(e){}}" +
@@ -422,6 +425,8 @@ public partial class KioskWindow : Window
                 _activeScreen.Id,
                 source,
                 e.HttpStatusCode);
+
+            _ = CapturePageDiagnosticsAsync(_activeScreen.Id);
             return;
         }
 
@@ -557,6 +562,58 @@ public partial class KioskWindow : Window
                 _ = OpenAdminSettingsAsync("corner-gesture");
                 return;
             }
+
+            if (string.Equals(messageType, "page-error", StringComparison.OrdinalIgnoreCase))
+            {
+                var message = json.RootElement.TryGetProperty("msg", out var msgElement)
+                    ? msgElement.GetString()
+                    : null;
+                var source = json.RootElement.TryGetProperty("src", out var srcElement)
+                    ? srcElement.GetString()
+                    : null;
+                var line = json.RootElement.TryGetProperty("line", out var lineElement)
+                    ? lineElement.GetInt32()
+                    : 0;
+                var col = json.RootElement.TryGetProperty("col", out var colElement)
+                    ? colElement.GetInt32()
+                    : 0;
+
+                var hasSignal = !string.IsNullOrWhiteSpace(message)
+                    || !string.IsNullOrWhiteSpace(source)
+                    || line > 0
+                    || col > 0;
+
+                if (!hasSignal)
+                {
+                    _logger.Debug(
+                        "Page JavaScript error event without details. ScreenId: {ScreenId}, RawPayload: {RawPayload}",
+                        _activeScreen.Id,
+                        TruncateForLog(e.WebMessageAsJson, 500));
+                    return;
+                }
+
+                _logger.Warning(
+                    "Page JavaScript error reported. ScreenId: {ScreenId}, Message: {Message}, Source: {Source}, Line: {Line}, Column: {Column}",
+                    _activeScreen.Id,
+                    TruncateForLog(message, 500),
+                    source,
+                    line,
+                    col);
+                return;
+            }
+
+            if (string.Equals(messageType, "page-unhandledrejection", StringComparison.OrdinalIgnoreCase))
+            {
+                var message = json.RootElement.TryGetProperty("msg", out var msgElement)
+                    ? msgElement.GetString()
+                    : null;
+
+                _logger.Warning(
+                    "Page promise rejection reported. ScreenId: {ScreenId}, Message: {Message}",
+                    _activeScreen.Id,
+                    TruncateForLog(message, 500));
+                return;
+            }
         }
         catch (JsonException)
         {
@@ -651,6 +708,16 @@ public partial class KioskWindow : Window
         var previousUrl = _activeScreen.Url;
         _activeScreen = updatedScreen;
         ConfigureReloadInterval(updatedScreen);
+
+        _logger.Information(
+            "Kiosk window received config change. ScreenId: {ScreenId}, Source: {Source}, ChangeId: {ChangeId}, UrlChanged: {UrlChanged}, ZoomPercent: {ZoomPercent}, RotationDegrees: {RotationDegrees}, Diagnostics: {Diagnostics}",
+            updatedScreen.Id,
+            e.Source,
+            e.ChangeId,
+            !string.Equals(previousUrl, updatedScreen.Url, StringComparison.Ordinal),
+            updatedScreen.ZoomPercent,
+            updatedScreen.RotationDegrees,
+            string.Join(" | ", e.Diagnostics));
 
         // Apply zoom/rotation changes immediately from this handler too,
         // so we don't rely solely on the supervisor's reconcile timing.
@@ -1116,5 +1183,71 @@ public partial class KioskWindow : Window
 
             _webView = null;
         }
+    }
+
+    private async Task CapturePageDiagnosticsAsync(string screenId)
+    {
+        if (_webView?.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var hrefJson = await _webView.CoreWebView2.ExecuteScriptAsync("window.location.href");
+            var titleJson = await _webView.CoreWebView2.ExecuteScriptAsync("document.title || ''");
+            var readyStateJson = await _webView.CoreWebView2.ExecuteScriptAsync("document.readyState || ''");
+            var dprJson = await _webView.CoreWebView2.ExecuteScriptAsync("window.devicePixelRatio || 1");
+
+            var href = ReadScriptStringValue(hrefJson);
+            var title = ReadScriptStringValue(titleJson);
+            var readyState = ReadScriptStringValue(readyStateJson);
+            var dpr = ReadScriptDoubleValue(dprJson);
+
+            _logger.Information(
+                "Page diagnostics snapshot. ScreenId: {ScreenId}, Href: {Href}, Title: {Title}, ReadyState: {ReadyState}, WebViewZoomFactor: {ZoomFactor}, DevicePixelRatio: {DevicePixelRatio}",
+                screenId,
+                href,
+                TruncateForLog(title, 200),
+                readyState,
+                _webView.ZoomFactor,
+                dpr);
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Failed to capture page diagnostics snapshot. ScreenId: {ScreenId}", screenId);
+        }
+    }
+
+    private static string? ReadScriptStringValue(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.ValueKind switch
+        {
+            JsonValueKind.String => doc.RootElement.GetString(),
+            JsonValueKind.Null => null,
+            _ => doc.RootElement.ToString()
+        };
+    }
+
+    private static double ReadScriptDoubleValue(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.ValueKind switch
+        {
+            JsonValueKind.Number when doc.RootElement.TryGetDouble(out var number) => number,
+            JsonValueKind.String when double.TryParse(doc.RootElement.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => 0d
+        };
+    }
+
+    private static string TruncateForLog(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+        {
+            return value ?? string.Empty;
+        }
+
+        return value[..maxLength] + "...";
     }
 }

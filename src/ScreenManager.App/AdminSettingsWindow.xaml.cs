@@ -8,6 +8,7 @@ using OrderBuddy.ScreenManager.App.ViewModels;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using OrderBuddy.ScreenManager.Core.Health;
+using Serilog;
 
 namespace OrderBuddy.ScreenManager.App;
 
@@ -15,6 +16,7 @@ public partial class AdminSettingsWindow : Window
 {
     private readonly AdminSettingsViewModel _vm;
     private readonly IServiceProvider _services;
+    private bool _saveInProgress;
 
     public AdminSettingsWindow(
         IConfigService configService,
@@ -32,11 +34,29 @@ public partial class AdminSettingsWindow : Window
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        if (_saveInProgress)
+        {
+            return;
+        }
+
+        _saveInProgress = true;
         // Force all delayed/pending WPF TextBox bindings to commit their current
         // text to the view-model BEFORE saving. Without this, a Delay=400 binding
         // may not have pushed the typed value yet, causing stale data to be saved.
-        FlushPendingBindings();
-        await _vm.SaveAsync();
+        try
+        {
+            FlushPendingBindings();
+            await _vm.SaveAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Admin settings save failed.");
+            System.Windows.MessageBox.Show(this, "Save failed. Please check logs and try again.", "Save failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _saveInProgress = false;
+        }
     }
 
     /// <summary>

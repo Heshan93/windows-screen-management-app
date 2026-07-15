@@ -14,7 +14,7 @@ public sealed class PlaceholderConfigService : IConfigService
     {
         cancellationToken.ThrowIfCancellationRequested();
         CurrentConfig = config;
-        ConfigChanged?.Invoke(this, new ConfigChangedEventArgs(CurrentConfig));
+        ConfigChanged?.Invoke(this, new ConfigChangedEventArgs(CurrentConfig, source: "placeholder-save"));
         return Task.CompletedTask;
     }
 

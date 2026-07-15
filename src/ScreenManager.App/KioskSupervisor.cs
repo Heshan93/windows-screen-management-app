@@ -131,7 +131,12 @@ public sealed class KioskSupervisor : IDisposable
 
     private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
     {
-        _ = e;
+        _logger.Information(
+            "Supervisor received config change. Source: {Source}, ChangeId: {ChangeId}, EnabledScreens: {EnabledScreens}, Diagnostics: {Diagnostics}",
+            e.Source,
+            e.ChangeId,
+            e.NewConfig.Screens.Count(s => s.Enabled),
+            string.Join(" | ", e.Diagnostics));
         RunOnUi(() => ReconcileWindows("config-changed"));
     }
 

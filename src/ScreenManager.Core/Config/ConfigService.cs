@@ -12,7 +12,6 @@ public sealed class ConfigService : IConfigService, IDisposable
 
     private bool _disposed;
     private bool _isInternalSave;
-    private DateTimeOffset _lastInternalSaveUtc = DateTimeOffset.MinValue;
     private IReadOnlyList<string> _lastDiagnostics = [];
 
     public AppConfig CurrentConfig { get; private set; } = AppConfig.CreateDefault();
@@ -70,7 +69,7 @@ public sealed class ConfigService : IConfigService, IDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var saved = await Task.Run(() =>
+        var result = await Task.Run(() =>
         {
             lock (_sync)
             {
@@ -79,19 +78,39 @@ public sealed class ConfigService : IConfigService, IDisposable
                 diagnostics.AddRange(validation.Diagnostics);
 
                 var normalized = EnsureAdminPinProtected(validation.NormalizedConfig, diagnostics);
+
+                var currentJson = JsonSerializer.Serialize(CurrentConfig, ConfigJsonContext.Default.AppConfig);
+                var normalizedJson = JsonSerializer.Serialize(normalized, ConfigJsonContext.Default.AppConfig);
+                if (string.Equals(currentJson, normalizedJson, StringComparison.Ordinal))
+                {
+                    diagnostics.Add("No config changes detected; save skipped.");
+                    _lastDiagnostics = diagnostics;
+                    return (Config: CurrentConfig, Changed: false, Diagnostics: (IReadOnlyList<string>)diagnostics);
+                }
+
                 SaveInternal(normalized, diagnostics);
 
                 CurrentConfig = normalized;
                 _lastDiagnostics = diagnostics;
-                return normalized;
+                return (Config: normalized, Changed: true, Diagnostics: (IReadOnlyList<string>)diagnostics);
             }
         }, cancellationToken);
+
+        if (!result.Changed)
+        {
+            return;
+        }
 
         // Notify listeners deterministically so kiosk windows re-apply the new URL/zoom/etc.
         // immediately. The FileSystemWatcher is suppressed during our own writes (_isInternalSave),
         // so relying on it would make saves apply only after an unrelated event or an app restart.
         // The watcher's own reload compares JSON and no-ops when it later observes the same content.
-        ConfigChanged?.Invoke(this, new ConfigChangedEventArgs(saved));
+        ConfigChanged?.Invoke(
+            this,
+            new ConfigChangedEventArgs(
+                result.Config,
+                source: "save-async",
+                diagnostics: result.Diagnostics));
     }
 
     public string GetLogLevel() => CurrentConfig.General.LogLevel;
@@ -195,7 +214,6 @@ public sealed class ConfigService : IConfigService, IDisposable
         finally
         {
             _isInternalSave = false;
-            _lastInternalSaveUtc = DateTimeOffset.UtcNow;
             if (File.Exists(tempFile))
             {
                 File.Delete(tempFile);
@@ -248,13 +266,6 @@ public sealed class ConfigService : IConfigService, IDisposable
             return;
         }
 
-        // Suppress watcher events for 2 seconds after an internal save.
-        // File.Replace generates multiple FS events that arrive AFTER _isInternalSave is cleared.
-        if ((DateTimeOffset.UtcNow - _lastInternalSaveUtc).TotalSeconds < 2)
-        {
-            return;
-        }
-
         _reloadTimer.Change(250, Timeout.Infinite);
     }
 
@@ -283,7 +294,11 @@ public sealed class ConfigService : IConfigService, IDisposable
             CurrentConfig = newConfig;
         }
 
-        ConfigChanged?.Invoke(this, new ConfigChangedEventArgs(newConfig));
+        ConfigChanged?.Invoke(
+            this,
+            new ConfigChangedEventArgs(
+                newConfig,
+                source: "watcher"));
     }
 
     public void Dispose()

@@ -6,6 +6,7 @@ using OrderBuddy.ScreenManager.App.Lifecycle;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using OrderBuddy.ScreenManager.Core.Health;
+using Serilog;
 
 namespace OrderBuddy.ScreenManager.App.ViewModels;
 
@@ -102,9 +103,27 @@ public sealed class AdminSettingsViewModel : ObservableObject
 
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
+        var changeId = Guid.NewGuid().ToString("N");
+        var selectedScreenId = SelectedScreen?.Id ?? "(none)";
+
+        Log.Information(
+            "Admin save requested. ChangeId: {ChangeId}, SelectedScreenId: {SelectedScreenId}, ScreenCount: {ScreenCount}",
+            changeId,
+            selectedScreenId,
+            Screens.Count);
+
         foreach (var screen in Screens)
         {
             screen.Url = NormalizeUrlInput(screen.Url);
+
+            Log.Information(
+                "Admin staged screen settings. ChangeId: {ChangeId}, ScreenId: {ScreenId}, Enabled: {Enabled}, Url: {Url}, ZoomPercent: {ZoomPercent}, RotationDegrees: {RotationDegrees}",
+                changeId,
+                screen.Id,
+                screen.Enabled,
+                screen.Url,
+                screen.ZoomPercent,
+                screen.RotationDegrees);
         }
 
         var current = _configService.CurrentConfig;
@@ -125,6 +144,18 @@ public sealed class AdminSettingsViewModel : ObservableObject
         };
 
         await _configService.SaveAsync(final, cancellationToken);
+
+        var persisted = _configService.CurrentConfig.Screens
+            .FirstOrDefault(s => s.Id.Equals(selectedScreenId, StringComparison.OrdinalIgnoreCase));
+
+        Log.Information(
+            "Admin save completed. ChangeId: {ChangeId}, PersistedSelectedScreenFound: {Found}, PersistedUrl: {PersistedUrl}, PersistedZoomPercent: {PersistedZoomPercent}, Diagnostics: {Diagnostics}",
+            changeId,
+            persisted is not null,
+            persisted?.Url,
+            persisted?.ZoomPercent,
+            string.Join(" | ", _configService.LastDiagnostics));
+
         HasUnsavedChanges = false;
         RefreshDiagnostics();
         await RefreshAutoStartStatusAsync(cancellationToken);

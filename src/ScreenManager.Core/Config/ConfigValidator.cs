@@ -97,10 +97,15 @@ internal static class ConfigValidator
             }
 
             var zoom = screen.ZoomPercent;
-            if (zoom < 25 || zoom > 500)
+            if (zoom < 25)
             {
-                fixedScreen = fixedScreen with { ZoomPercent = 100 };
-                diagnostics.Add($"screens[{screen.Id}].zoomPercent out of range; set to 100.");
+                fixedScreen = fixedScreen with { ZoomPercent = 25 };
+                diagnostics.Add($"screens[{screen.Id}].zoomPercent below minimum; clamped to 25.");
+            }
+            else if (zoom > 500)
+            {
+                fixedScreen = fixedScreen with { ZoomPercent = 500 };
+                diagnostics.Add($"screens[{screen.Id}].zoomPercent above maximum; clamped to 500.");
             }
 
             var rotation = screen.RotationDegrees;

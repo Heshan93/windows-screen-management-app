@@ -219,6 +219,13 @@ public partial class App : System.Windows.Application
 
 	private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
 	{
+		Log.Information(
+			"App received config change. Source: {Source}, ChangeId: {ChangeId}, EnabledScreens: {EnabledScreens}, Diagnostics: {Diagnostics}",
+			e.Source,
+			e.ChangeId,
+			e.NewConfig.Screens.Count(s => s.Enabled),
+			string.Join(" | ", e.Diagnostics));
+
 		ApplyKeyboardLock(e.NewConfig.General.LockSystemKeys);
 		_ = ApplyAutoStartAsync(e.NewConfig);
 
