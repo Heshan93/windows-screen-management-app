@@ -12,6 +12,7 @@ public sealed class ConfigService : IConfigService, IDisposable
 
     private bool _disposed;
     private bool _isInternalSave;
+    private DateTimeOffset _lastInternalSaveUtc = DateTimeOffset.MinValue;
     private IReadOnlyList<string> _lastDiagnostics = [];
 
     public AppConfig CurrentConfig { get; private set; } = AppConfig.CreateDefault();
@@ -194,6 +195,7 @@ public sealed class ConfigService : IConfigService, IDisposable
         finally
         {
             _isInternalSave = false;
+            _lastInternalSaveUtc = DateTimeOffset.UtcNow;
             if (File.Exists(tempFile))
             {
                 File.Delete(tempFile);
@@ -242,6 +244,13 @@ public sealed class ConfigService : IConfigService, IDisposable
     private void OnConfigFileChanged(object sender, FileSystemEventArgs e)
     {
         if (_isInternalSave)
+        {
+            return;
+        }
+
+        // Suppress watcher events for 2 seconds after an internal save.
+        // File.Replace generates multiple FS events that arrive AFTER _isInternalSave is cleared.
+        if ((DateTimeOffset.UtcNow - _lastInternalSaveUtc).TotalSeconds < 2)
         {
             return;
         }

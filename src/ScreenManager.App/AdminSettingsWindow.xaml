@@ -125,14 +125,14 @@
                             <TextBox Text="{Binding SelectedScreen.Url, UpdateSourceTrigger=PropertyChanged}" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,8" TextChanged="MarkDirty_TextChanged"/>
 
                             <TextBlock Text="Rotation" Grid.Row="2" Grid.Column="0" Margin="0,0,8,8"/>
-                            <TextBox Text="{Binding SelectedScreen.RotationDegrees}" Grid.Row="2" Grid.Column="1" Margin="0,0,12,8" TextChanged="MarkDirty_TextChanged"/>
+                            <TextBox Text="{Binding SelectedScreen.RotationDegrees, UpdateSourceTrigger=PropertyChanged}" Grid.Row="2" Grid.Column="1" Margin="0,0,12,8" TextChanged="MarkDirty_TextChanged"/>
                             <TextBlock Text="Zoom %" Grid.Row="2" Grid.Column="2" Margin="0,0,8,8"/>
-                            <TextBox Text="{Binding SelectedScreen.ZoomPercent}" Grid.Row="2" Grid.Column="3" Margin="0,0,0,8" TextChanged="MarkDirty_TextChanged"/>
+                            <TextBox Text="{Binding SelectedScreen.ZoomPercent, UpdateSourceTrigger=PropertyChanged}" Grid.Row="2" Grid.Column="3" Margin="0,0,0,8" TextChanged="MarkDirty_TextChanged"/>
 
                             <TextBlock Text="Reload sec" Grid.Row="3" Grid.Column="0" Margin="0,0,8,8"/>
-                            <TextBox Text="{Binding SelectedScreen.ReloadIntervalSec}" Grid.Row="3" Grid.Column="1" Margin="0,0,12,8" TextChanged="MarkDirty_TextChanged"/>
+                            <TextBox Text="{Binding SelectedScreen.ReloadIntervalSec, UpdateSourceTrigger=PropertyChanged}" Grid.Row="3" Grid.Column="1" Margin="0,0,12,8" TextChanged="MarkDirty_TextChanged"/>
                             <TextBlock Text="Startup sec" Grid.Row="3" Grid.Column="2" Margin="0,0,8,8"/>
-                            <TextBox Text="{Binding SelectedScreen.StartupDelaySec}" Grid.Row="3" Grid.Column="3" Margin="0,0,0,8" TextChanged="MarkDirty_TextChanged"/>
+                            <TextBox Text="{Binding SelectedScreen.StartupDelaySec, UpdateSourceTrigger=PropertyChanged}" Grid.Row="3" Grid.Column="3" Margin="0,0,0,8" TextChanged="MarkDirty_TextChanged"/>
 
                             <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Orientation="Vertical" Margin="0,4,0,0">
                                 <WrapPanel Margin="0,0,0,8">

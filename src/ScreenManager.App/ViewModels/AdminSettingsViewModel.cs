@@ -275,8 +275,12 @@ public sealed class AdminSettingsViewModel : ObservableObject
         var scaleY = wallHeight / Math.Max(1, maxY - minY);
         var scale = Math.Min(scaleX, scaleY);
 
-        var snapshots = _healthMonitor.GetSnapshots().ToDictionary(s => s.ScreenId, StringComparer.OrdinalIgnoreCase);
+        var snapshots = _healthMonitor.GetSnapshots()
+            .Where(s => !string.IsNullOrEmpty(s.ScreenId))
+            .GroupBy(s => s.ScreenId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var configScreens = _configService.CurrentConfig.Screens
+            .Where(s => !string.IsNullOrEmpty(s.DisplayKey))
             .GroupBy(s => s.DisplayKey, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 

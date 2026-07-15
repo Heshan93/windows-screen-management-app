@@ -35,7 +35,7 @@ public partial class KioskWindow : Window
         "var taps=[];" +
         "function cue(x,y){try{var d=document.createElement('div');d.style.cssText='position:fixed;z-index:2147483647;width:90px;height:90px;border-radius:50%;pointer-events:none;left:'+(x-45)+'px;top:'+(y-45)+'px;background:rgba(0,150,255,0.45);border:2px solid #fff;transition:opacity .5s,transform .5s;opacity:1;transform:scale(0.6);';(document.body||document.documentElement).appendChild(d);requestAnimationFrame(function(){d.style.opacity='0';d.style.transform='scale(1.5)';});setTimeout(function(){d.remove();},520);}catch(e){}}" +
         "function badge(n){try{var b=document.getElementById('__obAdminBadge');if(!b){b=document.createElement('div');b.id='__obAdminBadge';b.style.cssText='position:fixed;z-index:2147483647;top:8px;right:8px;pointer-events:none;background:#0096ff;color:#fff;font:600 13px sans-serif;padding:4px 10px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.4);';(document.body||document.documentElement).appendChild(b);}b.textContent='Admin '+n+'/5';b.style.opacity='1';clearTimeout(b.__t);b.__t=setTimeout(function(){b.style.transition='opacity .4s';b.style.opacity='0';},1400);}catch(e){}}" +
-        "function tap(x,y){var w=window.innerWidth;if(x<w-140||y>140){taps=[];return;}cue(x,y);var n=Date.now();taps.push(n);taps=taps.filter(function(t){return n-t<=3000;});badge(taps.length);if(taps.length>=5){taps=[];post({type:'admin-gesture'});}}" +
+        "function tap(x,y){var w=window.innerWidth;if(x<w-140||y>140){taps=[];return;}var n=Date.now();taps.push(n);taps=taps.filter(function(t){return n-t<=3000;});if(taps.length>=3){cue(x,y);badge(taps.length);}if(taps.length>=5){taps=[];post({type:'admin-gesture'});}}" +
         "window.addEventListener('pointerdown',function(e){tap(e.clientX,e.clientY);},true);})();";
 
     private readonly KioskBrowserOptions _browserOptions;
@@ -182,6 +182,12 @@ public partial class KioskWindow : Window
         if (isSameTarget && _webView?.CoreWebView2 is not null)
         {
             ApplyZoomAndRotation(_webView, screen);
+            _logger.Information(
+                "Applied settings in place. ScreenId: {ScreenId}, ZoomPercent: {ZoomPercent}, RotationDegrees: {RotationDegrees}",
+                screen.Id,
+                screen.ZoomPercent,
+                screen.RotationDegrees);
+
             if (!string.Equals(previousUrl, screen.Url, StringComparison.Ordinal))
             {
                 _logger.Information("Applying updated URL in place. ScreenId: {ScreenId}, Url: {Url}", screen.Id, screen.Url);
@@ -301,7 +307,8 @@ public partial class KioskWindow : Window
 
     private static void ApplyZoomAndRotation(WebView2 webView, ScreenConfig screen)
     {
-        webView.ZoomFactor = Math.Clamp(screen.ZoomPercent / 100.0, 0.25, 5.0);
+        var targetZoom = Math.Clamp(screen.ZoomPercent / 100.0, 0.25, 5.0);
+        webView.ZoomFactor = targetZoom;
 
         webView.LayoutTransform = screen.RotationDegrees switch
         {
@@ -641,8 +648,21 @@ public partial class KioskWindow : Window
             return;
         }
 
+        var previousUrl = _activeScreen.Url;
         _activeScreen = updatedScreen;
         ConfigureReloadInterval(updatedScreen);
+
+        // Apply zoom/rotation changes immediately from this handler too,
+        // so we don't rely solely on the supervisor's reconcile timing.
+        if (_webView is not null)
+        {
+            ApplyZoomAndRotation(_webView, updatedScreen);
+
+            if (!string.Equals(previousUrl, updatedScreen.Url, StringComparison.Ordinal))
+            {
+                _webView.CoreWebView2?.Navigate(updatedScreen.Url);
+            }
+        }
     }
 
     private async Task AttemptRecoveryIfDueAsync(string reason)
@@ -1018,9 +1038,17 @@ public partial class KioskWindow : Window
     {
         return Dispatcher.InvokeAsync(() =>
         {
+            // Temporarily suspend Topmost on ALL kiosk windows so the modal
+            // dialogs (PIN pad, settings) are not hidden behind them.
+            var supervisor = _services.GetService<KioskSupervisor>();
+            supervisor?.SuspendTopmost();
+
             try
             {
                 var pinWindow = ActivatorUtilities.CreateInstance<AdminPinWindow>(_services);
+                pinWindow.Owner = this;
+                pinWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+                pinWindow.Topmost = true;
                 var unlocked = pinWindow.ShowDialog() == true;
                 if (!unlocked)
                 {
@@ -1031,12 +1059,19 @@ public partial class KioskWindow : Window
                 _logger.Information("Admin access granted. Trigger: {Trigger}", trigger);
 
                 var settingsWindow = ActivatorUtilities.CreateInstance<AdminSettingsWindow>(_services);
+                settingsWindow.Owner = this;
+                settingsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+                settingsWindow.Topmost = true;
                 settingsWindow.ShowDialog();
                 _logger.Information("Admin settings closed. Trigger: {Trigger}", trigger);
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Failed to open admin settings. Trigger: {Trigger}", trigger);
+            }
+            finally
+            {
+                supervisor?.RestoreTopmost();
             }
         }).Task;
     }

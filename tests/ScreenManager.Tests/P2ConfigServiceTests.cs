@@ -215,4 +215,58 @@ public sealed class P2ConfigServiceTests
 
         Directory.Delete(rootDir, true);
     }
+
+    [Fact]
+    public async Task SaveAsync_RaisesConfigChangedEvent()
+    {
+        // Regression: admin saves must notify listeners so kiosk windows re-apply
+        // the new URL/zoom immediately (the file watcher is suppressed during internal saves).
+        var (rootDir, options) = CreateOptions();
+        using var service = new ConfigService(options);
+
+        var tcs = new TaskCompletionSource<AppConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.ConfigChanged += (_, args) => tcs.TrySetResult(args.NewConfig);
+
+        var updated = service.CurrentConfig with
+        {
+            Screens =
+            [
+                new ScreenConfig { Id = "s1", Name = "Till", Enabled = true, Url = "https://example.org", ZoomPercent = 70 }
+            ]
+        };
+
+        await service.SaveAsync(updated);
+
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().Be(tcs.Task, "SaveAsync must raise ConfigChanged");
+        var changed = await tcs.Task;
+        changed.Screens.Should().ContainSingle();
+        changed.Screens[0].ZoomPercent.Should().Be(70);
+
+        Directory.Delete(rootDir, true);
+    }
+
+    [Theory]
+    [InlineData("mypos.local/app", "https://mypos.local/app")]
+    [InlineData("localhost:8080", "https://localhost:8080")]
+    [InlineData("http://plain.example.com", "http://plain.example.com")]
+    [InlineData("https://secure.example.com/x?y=1", "https://secure.example.com/x?y=1")]
+    [InlineData("not-a-url", "https://example.org")]
+    public void Normalize_Url_AppliesFriendlyNormalizationOrFallback(string input, string expected)
+    {
+        var (rootDir, options) = CreateOptions();
+
+        var config = AppConfig.CreateDefault() with
+        {
+            Screens = [new ScreenConfig { Id = "s1", Url = input }]
+        };
+        File.WriteAllText(options.ConfigFilePath, JsonSerializer.Serialize(config));
+
+        using var service = new ConfigService(options);
+
+        service.CurrentConfig.Screens[0].Url.Should().Be(expected);
+
+        Directory.Delete(rootDir, true);
+    }
 }
+

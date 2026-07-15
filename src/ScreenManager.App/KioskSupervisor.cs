@@ -69,6 +69,31 @@ public sealed class KioskSupervisor : IDisposable
         }
     }
 
+    /// <summary>
+    /// Temporarily removes the Topmost flag from all kiosk windows so modal dialogs
+    /// (PIN pad, admin settings) are not hidden behind them.
+    /// </summary>
+    public void SuspendTopmost()
+    {
+        if (_disposed) return;
+        foreach (var (_, window) in _windows)
+        {
+            window.Dispatcher.Invoke(() => window.Topmost = false);
+        }
+    }
+
+    /// <summary>
+    /// Restores the Topmost flag on all kiosk windows after admin mode ends.
+    /// </summary>
+    public void RestoreTopmost()
+    {
+        if (_disposed) return;
+        foreach (var (_, window) in _windows)
+        {
+            window.ReassertTopmost();
+        }
+    }
+
     public void ShowIdentifyOverlays()
     {
         if (_disposed)

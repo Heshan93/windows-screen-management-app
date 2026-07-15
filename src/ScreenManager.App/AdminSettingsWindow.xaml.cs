@@ -32,7 +32,36 @@ public partial class AdminSettingsWindow : Window
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        // Force all delayed/pending WPF TextBox bindings to commit their current
+        // text to the view-model BEFORE saving. Without this, a Delay=400 binding
+        // may not have pushed the typed value yet, causing stale data to be saved.
+        FlushPendingBindings();
         await _vm.SaveAsync();
+    }
+
+    /// <summary>
+    /// Walks the visual tree and forces every TextBox whose binding has a pending
+    /// Delay update to push its current text to the source immediately.
+    /// </summary>
+    private void FlushPendingBindings()
+    {
+        FlushBindingsRecursive(this);
+
+        static void FlushBindingsRecursive(System.Windows.DependencyObject parent)
+        {
+            var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent);
+            for (var i = 0; i < count; i++)
+            {
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+                if (child is System.Windows.Controls.TextBox textBox)
+                {
+                    var binding = textBox.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty);
+                    binding?.UpdateSource();
+                }
+
+                FlushBindingsRecursive(child);
+            }
+        }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e)
