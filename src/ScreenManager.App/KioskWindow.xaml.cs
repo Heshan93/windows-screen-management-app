@@ -5,8 +5,10 @@ using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Text.Json;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -29,6 +31,13 @@ namespace OrderBuddy.ScreenManager.App;
 /// </summary>
 public partial class KioskWindow : Window
 {
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpShowWindow = 0x0040;
+    private const uint SwpNoActivate = 0x0010;
+    private static readonly IntPtr HwndTopmost = new(-1);
+    private static readonly HashSet<string> AllowedForegroundProcesses = BuildAllowedForegroundProcesses();
+
     private const string HeartbeatScript =
         "(function(){if(window.__obInstalled){return;}window.__obInstalled=true;" +
         "function post(m){if(window.chrome&&window.chrome.webview){window.chrome.webview.postMessage(m);}}" +
@@ -52,6 +61,7 @@ public partial class KioskWindow : Window
     private readonly IServiceProvider _services;
     private readonly Stopwatch _coldStartStopwatch = new();
     private readonly DispatcherTimer _healthTickTimer;
+    private readonly DispatcherTimer _foregroundEnforcementTimer;
     private readonly DispatcherTimer _reloadIntervalTimer;
     private readonly HttpClient _connectivityClient = new() { Timeout = TimeSpan.FromSeconds(5) };
 
@@ -98,6 +108,12 @@ public partial class KioskWindow : Window
             Interval = TimeSpan.FromSeconds(2)
         };
         _healthTickTimer.Tick += OnHealthTick;
+
+        _foregroundEnforcementTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2)
+        };
+        _foregroundEnforcementTimer.Tick += OnForegroundEnforcementTick;
 
         _reloadIntervalTimer = new DispatcherTimer();
         _reloadIntervalTimer.Tick += OnReloadIntervalTick;
@@ -149,9 +165,7 @@ public partial class KioskWindow : Window
     {
         _ = Dispatcher.InvokeAsync(() =>
         {
-            Topmost = false;
-            Topmost = true;
-            Activate();
+            EnsureKioskWindowPriority(bringToForeground: true, reason: "reassert-topmost");
         });
     }
 
@@ -222,6 +236,8 @@ public partial class KioskWindow : Window
     {
         _isLoaded = true;
         _healthTickTimer.Start();
+        _foregroundEnforcementTimer.Start();
+        EnsureKioskWindowPriority(bringToForeground: false, reason: "loaded");
 
         if (_activeScreen is not null && _activeDisplay is not null)
         {
@@ -629,10 +645,13 @@ public partial class KioskWindow : Window
         }
 
         var now = _clock.UtcNow;
-        var heartbeatSnapshot = _healthMonitor.EvaluateHeartbeatTimeout(_activeScreen.Id, now);
-        if (heartbeatSnapshot.State is ScreenHealthState.Recovering or ScreenHealthState.Offline)
+        if (!IsExternalProcessInForeground())
         {
-            ShowRecoveryOverlay(heartbeatSnapshot, "Heartbeat missing. Waiting for recovery retry.");
+            var heartbeatSnapshot = _healthMonitor.EvaluateHeartbeatTimeout(_activeScreen.Id, now);
+            if (heartbeatSnapshot.State is ScreenHealthState.Recovering or ScreenHealthState.Offline)
+            {
+                ShowRecoveryOverlay(heartbeatSnapshot, "Heartbeat missing. Waiting for recovery retry.");
+            }
         }
 
         if (_memoryWatchdogThresholdMb > 0)
@@ -651,6 +670,30 @@ public partial class KioskWindow : Window
         }
 
         await AttemptRecoveryIfDueAsync("health-tick");
+    }
+
+    private void OnForegroundEnforcementTick(object? sender, EventArgs e)
+    {
+        if (_activeScreen is null || !IsLoaded || Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        if (TryGetForegroundProcessName() is not { } foreground)
+        {
+            return;
+        }
+
+        if (foreground.IsCurrentProcess || foreground.IsAllowed)
+        {
+            return;
+        }
+
+        _logger.Warning(
+            "Reclaiming kiosk foreground from process {ProcessName}. ScreenId: {ScreenId}",
+            foreground.ProcessName,
+            _activeScreen.Id);
+        EnsureKioskWindowPriority(bringToForeground: true, reason: "foreground-enforcement");
     }
 
     private void OnReloadIntervalTick(object? sender, EventArgs e)
@@ -1146,6 +1189,7 @@ public partial class KioskWindow : Window
     private void OnClosed(object? sender, EventArgs e)
     {
         _healthTickTimer.Stop();
+        _foregroundEnforcementTimer.Stop();
         _reloadIntervalTimer.Stop();
         _connectivityClient.Dispose();
         _configService.ConfigChanged -= OnConfigChanged;
@@ -1184,6 +1228,130 @@ public partial class KioskWindow : Window
             _webView = null;
         }
     }
+
+    private void EnsureKioskWindowPriority(bool bringToForeground, string reason)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        Topmost = true;
+
+        var flags = SwpNoMove | SwpNoSize | SwpShowWindow;
+        if (!bringToForeground)
+        {
+            flags |= SwpNoActivate;
+        }
+
+        if (!SetWindowPos(handle, HwndTopmost, 0, 0, 0, 0, flags))
+        {
+            _logger.Debug(
+                "SetWindowPos did not complete while enforcing kiosk priority. ScreenId: {ScreenId}, Reason: {Reason}, Win32Error: {Win32Error}",
+                _activeScreen?.Id,
+                reason,
+                Marshal.GetLastWin32Error());
+        }
+
+        if (bringToForeground)
+        {
+            Activate();
+            _ = SetForegroundWindow(handle);
+        }
+    }
+
+    private static HashSet<string> BuildAllowedForegroundProcesses()
+    {
+        var processNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "taskmgr",
+            "anydesk",
+            "anydeskmsi",
+            "rustdesk",
+            "teamviewer",
+            "tv_x64",
+            "tv_w32",
+            "screenconnect.windowsclient",
+            "screenconnect.clientservice",
+            "bomgar-scc",
+            "bomgar-rep",
+            "mstsc",
+            "msrdc"
+        };
+
+        var extra = Environment.GetEnvironmentVariable("ORDERBUDDY_FOREGROUND_ALLOWLIST");
+        if (string.IsNullOrWhiteSpace(extra))
+        {
+            return processNames;
+        }
+
+        foreach (var entry in extra.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var normalized = Path.GetFileNameWithoutExtension(entry);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                processNames.Add(normalized);
+            }
+        }
+
+        return processNames;
+    }
+
+    private bool IsExternalProcessInForeground()
+    {
+        var foreground = TryGetForegroundProcessName();
+        return foreground is { IsCurrentProcess: false };
+    }
+
+    private static ForegroundProcessInfo? TryGetForegroundProcessName()
+    {
+        var foregroundWindow = GetForegroundWindow();
+        if (foregroundWindow == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        _ = GetWindowThreadProcessId(foregroundWindow, out var processId);
+        if (processId == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            var processName = process.ProcessName;
+            return new ForegroundProcessInfo(
+                processName,
+                process.Id == Environment.ProcessId,
+                AllowedForegroundProcesses.Contains(processName));
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private readonly record struct ForegroundProcessInfo(string ProcessName, bool IsCurrentProcess, bool IsAllowed);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     private async Task CapturePageDiagnosticsAsync(string screenId)
     {
