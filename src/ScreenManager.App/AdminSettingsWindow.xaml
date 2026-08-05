@@ -155,6 +155,42 @@
                                 <Button Content="Test URL" Margin="0,0,8,0" Click="TestUrl_Click"/>
                                 <TextBlock Text="{Binding TestUrlResult}" VerticalAlignment="Center" Foreground="#88DD88"/>
                                 </WrapPanel>
+                                <Separator Margin="0,10,0,8"/>
+                                <TextBlock Text="Auto-login credentials" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                <CheckBox Content="Enable auto-login after cache clear"
+                                          IsChecked="{Binding SelectedScreen.AutoLoginEnabled}"
+                                          Margin="0,0,0,8"
+                                          Checked="MarkDirty_Toggled"
+                                          Unchecked="MarkDirty_Toggled"/>
+                                <WrapPanel Margin="0,0,0,8">
+                                    <TextBlock Text="Username" VerticalAlignment="Center" Margin="0,0,8,0" Width="80"/>
+                                    <TextBox Width="220"
+                                             Text="{Binding SelectedScreen.CredentialUsername, UpdateSourceTrigger=PropertyChanged}"
+                                             TextChanged="MarkDirty_TextChanged"/>
+                                </WrapPanel>
+                                <WrapPanel Margin="0,0,0,4">
+                                    <TextBlock Text="Password" VerticalAlignment="Center" Margin="0,0,8,0" Width="80"/>
+                                    <PasswordBox x:Name="CredentialPasswordBox" Width="220" PasswordChanged="CredentialPassword_Changed"/>
+                                    <TextBlock Text="(leave blank to keep existing)" VerticalAlignment="Center" Foreground="#9ED0FF" Margin="8,0,0,0"/>
+                                </WrapPanel>
+                                <WrapPanel Margin="0,0,0,4">
+                                    <TextBlock Text="Stored password:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <TextBlock VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="None"/>
+                                                <Setter Property="Foreground" Value="#FF8888"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SelectedScreen.HasStoredPassword}" Value="True">
+                                                        <Setter Property="Text" Value="Saved (encrypted)"/>
+                                                        <Setter Property="Foreground" Value="#88DD88"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Button Content="Clear saved password" Margin="12,0,0,0" Click="ClearCredentialPassword_Click"/>
+                                </WrapPanel>
                             </StackPanel>
                         </Grid>
                     </Grid>
@@ -178,7 +214,38 @@
                                TextWrapping="Wrap"
                                Foreground="#9ED0FF"
                                Margin="0,10,0,0"/>
-                    <TextBlock Text="Use Save to apply and persist startup settings." Margin="0,10,0,0"/>
+                    <TextBlock Text="Use Save to apply and persist startup settings." Margin="0,10,0,20"/>
+
+                    <TextBlock Text="Cache maintenance" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <CheckBox Content="Enable scheduled cache clear"
+                              IsChecked="{Binding CacheMaintenanceEnabled}"
+                              Margin="0,0,0,8"
+                              Checked="MarkDirty_Toggled"
+                              Unchecked="MarkDirty_Toggled"/>
+                    <WrapPanel Margin="0,0,0,8">
+                        <TextBlock Text="Interval (minutes)" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBox Width="70"
+                                 Text="{Binding CacheMaintenanceIntervalMinutes, UpdateSourceTrigger=PropertyChanged}"
+                                 TextChanged="MarkDirty_TextChanged"/>
+                        <TextBlock Text="(min 5)" VerticalAlignment="Center" Foreground="#9ED0FF" Margin="6,0,0,0"/>
+                    </WrapPanel>
+                    <WrapPanel Margin="0,0,0,8">
+                        <TextBlock Text="Clear scope" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox Width="200"
+                                  SelectedValue="{Binding CacheMaintenanceScope}"
+                                  SelectedValuePath="Tag"
+                                  SelectionChanged="MarkDirty_SelectionChanged">
+                            <ComboBoxItem Content="Cache only (keeps login)" Tag="cacheOnly"/>
+                            <ComboBoxItem Content="Cache + session (logs out)" Tag="cacheAndSession"/>
+                        </ComboBox>
+                    </WrapPanel>
+                    <CheckBox Content="Reload page after clear"
+                              IsChecked="{Binding CacheMaintenanceReloadAfterClear}"
+                              Margin="0,0,0,8"
+                              Checked="MarkDirty_Toggled"
+                              Unchecked="MarkDirty_Toggled"/>
+                    <TextBlock Text="Note: 'Cache + session' logs the kiosk out. Enable Auto-login on the screen to re-authenticate automatically."
+                               TextWrapping="Wrap" Foreground="#9ED0FF" Margin="0,0,0,8"/>
                 </StackPanel>
             </TabItem>
             <TabItem Header="Advanced">
@@ -194,8 +261,10 @@
                         <Button Content="Refresh" Margin="0,0,8,0" Click="RefreshDiagnostics_Click"/>
                         <Button Content="Connectivity test" Margin="0,0,8,0" Click="ConnectivityTest_Click"/>
                         <Button Content="Restart all screens" Margin="0,0,8,0" Click="RestartAll_Click"/>
+                        <Button Content="Clear cache now" Margin="0,0,8,0" Click="ClearCacheNow_Click"/>
                         <Button Content="Export support bundle" Click="ExportBundle_Click"/>
                     </StackPanel>
+                    <TextBlock Text="{Binding CacheClearResult}" Foreground="#88DD88" Margin="0,6,0,0"/>
                 </StackPanel>
             </TabItem>
             <TabItem Header="About">

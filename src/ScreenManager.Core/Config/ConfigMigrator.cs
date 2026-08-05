@@ -12,8 +12,34 @@ internal static class ConfigMigrator
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        if (root.TryGetProperty("schemaVersion", out _))
+        // Check both PascalCase ("SchemaVersion") and camelCase ("schemaVersion") to handle
+        // any JSON written by older builds or external tools.
+        if ((root.TryGetProperty("SchemaVersion", out var versionEl)
+             || root.TryGetProperty("schemaVersion", out versionEl))
+            && versionEl.TryGetInt32(out var schemaVersion))
         {
+            // v2 → v3: add CacheMaintenance defaults (new in P13).
+            if (schemaVersion == 2)
+            {
+                // Deserialize what we have, then patch the new section in.
+                var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var v2Config = System.Text.Json.JsonSerializer.Deserialize<AppConfig>(json, options);
+                if (v2Config is not null)
+                {
+                    migratedConfig = v2Config with
+                    {
+                        SchemaVersion = AppConfig.CurrentSchemaVersion,
+                        General = v2Config.General with
+                        {
+                            CacheMaintenance = new CacheMaintenanceSettings()
+                        }
+                    };
+                    diagnostic = "Migrated schemaVersion 2 → 3: added CacheMaintenance defaults.";
+                    return true;
+                }
+            }
+
+            // Already current — no migration needed.
             return false;
         }
 
@@ -74,7 +100,7 @@ internal static class ConfigMigrator
             Screens = screens
         };
 
-        diagnostic = "Migrated legacy v1 config format to schemaVersion 2.";
+        diagnostic = "Migrated legacy v1 config format to schemaVersion 3.";
         return true;
     }
 }

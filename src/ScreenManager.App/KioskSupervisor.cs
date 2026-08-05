@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using System.Windows.Threading;
+using System.Threading;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using Serilog;
@@ -13,6 +14,7 @@ public sealed class KioskSupervisor : IDisposable
     private readonly IDisplayManager _displayManager;
     private readonly Serilog.ILogger _logger;
     private readonly Dictionary<string, KioskWindow> _windows = new(StringComparer.OrdinalIgnoreCase);
+    private int _cacheClearInProgress; // 0 = idle, 1 = running (Interlocked flag)
 
     private bool _disposed;
 
@@ -52,6 +54,67 @@ public sealed class KioskSupervisor : IDisposable
         {
             window.RequestReload(reason);
             _logger.Information("Requested reload for screen {ScreenId}. Reason: {Reason}", screenId, reason);
+        }
+    }
+
+    /// <summary>
+    /// Clears the shared WebView2 profile cache on all live windows (one clear suffices
+    /// since the profile is shared) and optionally reloads all windows afterward.
+    /// A re-entrancy guard prevents concurrent timer/manual clears from overlapping.
+    /// </summary>
+    public async Task ClearCacheAllAsync(string scope, bool reloadAfter)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _cacheClearInProgress, 1, 0) != 0)
+        {
+            _logger.Warning("ClearCacheAllAsync: another clear is already in progress. Skipping.");
+            return;
+        }
+
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            _logger.Information(
+                "Cache clear started. Scope: {Scope}, ReloadAfter: {ReloadAfter}, Windows: {Count}",
+                scope, reloadAfter, _windows.Count);
+
+            // The WebView2 profile is shared — clearing via any one window clears all.
+            // We attempt the first live window found; if none is live, log and skip.
+            KioskWindow? target = null;
+            foreach (var window in _windows.Values)
+            {
+                target = window;
+                break;
+            }
+
+            bool cleared = false;
+            if (target is not null)
+            {
+                cleared = await target.Dispatcher.InvokeAsync(
+                    () => target.ClearCacheAsync(scope)).Task.Unwrap();
+            }
+            else
+            {
+                _logger.Warning("ClearCacheAllAsync: no live kiosk windows. Cache not cleared.");
+            }
+
+            sw.Stop();
+            _logger.Information(
+                "Cache clear finished. Scope: {Scope}, Cleared: {Cleared}, ElapsedMs: {ElapsedMs}",
+                scope, cleared, sw.ElapsedMilliseconds);
+
+            if (cleared && reloadAfter)
+            {
+                ReloadAllWindows("cache-clear");
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _cacheClearInProgress, 0);
         }
     }
 

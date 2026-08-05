@@ -32,6 +32,7 @@ public partial class App : System.Windows.Application
 	private IKeyboardLockService? _keyboardLockService;
 	private IConfigService? _configService;
 	private INightlyMaintenanceScheduler? _nightlyMaintenanceScheduler;
+	private ICacheMaintenanceScheduler? _cacheMaintenanceScheduler;
 	private IAutoStartService? _autoStartService;
 
 	public App()
@@ -164,6 +165,7 @@ public partial class App : System.Windows.Application
 				services.AddSingleton<Serilog.ILogger>(Log.Logger);
 				services.AddSingleton<KioskSupervisor>();
 				services.AddSingleton<INightlyMaintenanceScheduler, NightlyMaintenanceScheduler>();
+				services.AddSingleton<ICacheMaintenanceScheduler, CacheMaintenanceScheduler>();
 				services.AddTransient<AdminPinWindow>();
 				services.AddTransient<AdminSettingsWindow>();
 				services.AddTransient<SetupWizardWindow>();
@@ -200,11 +202,13 @@ public partial class App : System.Windows.Application
 			Log.Warning("ServiceWatchdogEnabled is on, but Windows Service watchdog is design-stub only in P8 and remains disabled.");
 		}
 
-		StartupDiagnostics.Write("Stage 9: Starting KioskSupervisor and nightly scheduler.");
+		StartupDiagnostics.Write("Stage 9: Starting KioskSupervisor, nightly scheduler, and cache maintenance scheduler.");
 		_supervisor = _host.Services.GetRequiredService<KioskSupervisor>();
 		_nightlyMaintenanceScheduler = _host.Services.GetRequiredService<INightlyMaintenanceScheduler>();
+		_cacheMaintenanceScheduler = _host.Services.GetRequiredService<ICacheMaintenanceScheduler>();
 		_supervisor.Start();
 		_nightlyMaintenanceScheduler.Start();
+		_cacheMaintenanceScheduler.Start();
 
 		StartupDiagnostics.Write("Stage 10: Applying auto-start registration.");
 		await ApplyAutoStartAsync(_configService.CurrentConfig);
@@ -419,10 +423,16 @@ public partial class App : System.Windows.Application
 
 		_keyboardLockService?.Stop();
 		_nightlyMaintenanceScheduler?.Stop();
+		_cacheMaintenanceScheduler?.Stop();
 
 		if (_nightlyMaintenanceScheduler is IDisposable disposableNightly)
 		{
 			disposableNightly.Dispose();
+		}
+
+		if (_cacheMaintenanceScheduler is IDisposable disposableCache)
+		{
+			disposableCache.Dispose();
 		}
 
 		if (_keyboardLockService is IDisposable disposableKeyboardLock)

@@ -19,6 +19,17 @@ public sealed class AdminScreenItemViewModel : ObservableObject
     private string _fallbackImagePath = string.Empty;
     private string _fallbackHtmlPath = string.Empty;
 
+    // Credentials (P13)
+    private bool _autoLoginEnabled;
+    private string _credentialUsername = string.Empty;
+
+    /// <summary>
+    /// Plain-text password as entered by the admin. Kept in memory only while the
+    /// settings window is open; encrypted to EncryptedPassword on save.
+    /// NEVER persisted or logged in plain text.
+    /// </summary>
+    public string PlainTextPassword { get; set; } = string.Empty;
+
     public string Id { get => _id; set => SetProperty(ref _id, value); }
     public bool Enabled { get => _enabled; set => SetProperty(ref _enabled, value); }
     public string Name { get => _name; set => SetProperty(ref _name, value); }
@@ -33,6 +44,12 @@ public sealed class AdminScreenItemViewModel : ObservableObject
     public string FallbackMode { get => _fallbackMode; set => SetProperty(ref _fallbackMode, value); }
     public string FallbackImagePath { get => _fallbackImagePath; set => SetProperty(ref _fallbackImagePath, value); }
     public string FallbackHtmlPath { get => _fallbackHtmlPath; set => SetProperty(ref _fallbackHtmlPath, value); }
+
+    public bool AutoLoginEnabled { get => _autoLoginEnabled; set => SetProperty(ref _autoLoginEnabled, value); }
+    public string CredentialUsername { get => _credentialUsername; set => SetProperty(ref _credentialUsername, value); }
+
+    /// <summary>True when the screen already has an encrypted password stored in config.</summary>
+    public bool HasStoredPassword { get; set; }
 
     public static AdminScreenItemViewModel FromConfig(ScreenConfig screen)
     {
@@ -51,12 +68,23 @@ public sealed class AdminScreenItemViewModel : ObservableObject
             FullScreen = screen.FullScreen,
             FallbackMode = screen.Fallback.Mode,
             FallbackImagePath = screen.Fallback.ImagePath,
-            FallbackHtmlPath = screen.Fallback.CustomHtmlPath
+            FallbackHtmlPath = screen.Fallback.CustomHtmlPath,
+            AutoLoginEnabled = screen.Credentials.AutoLoginEnabled,
+            CredentialUsername = screen.Credentials.Username,
+            HasStoredPassword = !string.IsNullOrEmpty(screen.Credentials.EncryptedPassword),
+            PlainTextPassword = string.Empty   // never populated from config
         };
     }
 
     public ScreenConfig ToConfig(ScreenConfig original)
     {
+        // Determine the encrypted password to persist:
+        // - if the admin typed a new password, encrypt it
+        // - if they left it blank, keep the existing encrypted blob
+        var encryptedPassword = string.IsNullOrEmpty(PlainTextPassword)
+            ? original.Credentials.EncryptedPassword
+            : OrderBuddy.ScreenManager.Core.Security.AdminCredentialsService.Protect(PlainTextPassword);
+
         return original with
         {
             Id = Id,
@@ -75,6 +103,12 @@ public sealed class AdminScreenItemViewModel : ObservableObject
                 Mode = FallbackMode,
                 ImagePath = FallbackImagePath,
                 CustomHtmlPath = FallbackHtmlPath
+            },
+            Credentials = original.Credentials with
+            {
+                AutoLoginEnabled = AutoLoginEnabled,
+                Username = CredentialUsername,
+                EncryptedPassword = encryptedPassword
             }
         };
     }

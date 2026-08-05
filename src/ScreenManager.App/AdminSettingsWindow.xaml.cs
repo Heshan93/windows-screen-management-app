@@ -30,6 +30,21 @@ public partial class AdminSettingsWindow : Window
         _services = services;
         _vm = new AdminSettingsViewModel(configService, displayManager, healthMonitor, kioskSupervisor, autoStartService);
         DataContext = _vm;
+
+        _vm.PropertyChanged += OnVmPropertyChanged;
+    }
+
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // Clear the PasswordBox whenever the selected screen changes to avoid
+        // accidentally carrying a typed password over to a different screen.
+        if (e.PropertyName == nameof(AdminSettingsViewModel.SelectedScreen))
+        {
+            if (CredentialPasswordBox is not null)
+            {
+                CredentialPasswordBox.Password = string.Empty;
+            }
+        }
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
@@ -154,6 +169,58 @@ public partial class AdminSettingsWindow : Window
     {
         _vm.RestartAllScreens();
         _vm.RefreshDiagnostics();
+    }
+
+    private async void ClearCacheNow_Click(object sender, RoutedEventArgs e)
+    {
+        var result = System.Windows.MessageBox.Show(
+            this,
+            $"Clear cache now using scope '{_vm.CacheMaintenanceScope}'?" +
+            (_vm.CacheMaintenanceScope == "cacheAndSession" ? "\n\nThis will log the kiosk out. Auto-login will re-authenticate if configured." : string.Empty),
+            "Clear cache",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (result == MessageBoxResult.Yes)
+        {
+            await _vm.ClearCacheNowAsync();
+        }
+    }
+
+    private void CredentialPassword_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_vm.SelectedScreen is not null && sender is System.Windows.Controls.PasswordBox pb)
+        {
+            _vm.SelectedScreen.PlainTextPassword = pb.Password;
+            _vm.MarkDirty();
+        }
+    }
+
+    private void ClearCredentialPassword_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm.SelectedScreen is null)
+        {
+            return;
+        }
+
+        var result = System.Windows.MessageBox.Show(
+            this,
+            "Remove the saved password for this screen? Auto-login will stop working until a new password is entered.",
+            "Clear saved password",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result == MessageBoxResult.Yes)
+        {
+            _vm.SelectedScreen.PlainTextPassword = string.Empty;
+            _vm.SelectedScreen.HasStoredPassword = false;
+            // Persist immediately so ToConfig writes an empty EncryptedPassword.
+            _vm.MarkDirty();
+            if (CredentialPasswordBox is not null)
+            {
+                CredentialPasswordBox.Password = string.Empty;
+            }
+        }
     }
 
     private void ExportBundle_Click(object sender, RoutedEventArgs e)

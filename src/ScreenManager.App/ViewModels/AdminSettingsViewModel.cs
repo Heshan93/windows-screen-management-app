@@ -39,6 +39,13 @@ public sealed class AdminSettingsViewModel : ObservableObject
     private bool _serviceWatchdogEnabled;
     private AdminScreenItemViewModel? _selectedScreen;
 
+    // Cache maintenance (P13)
+    private bool _cacheMaintenanceEnabled;
+    private int _cacheMaintenanceIntervalMinutes = 60;
+    private string _cacheMaintenanceScope = "cacheAndSession";
+    private bool _cacheMaintenanceReloadAfterClear = true;
+    private string _cacheClearResult = string.Empty;
+
     public ObservableCollection<AdminScreenItemViewModel> Screens { get; } = [];
     public ObservableCollection<DisplayTileViewModel> DisplayTiles { get; } = [];
 
@@ -49,6 +56,12 @@ public sealed class AdminSettingsViewModel : ObservableObject
     public bool AutoStartOnLogin { get => _autoStartOnLogin; set => SetProperty(ref _autoStartOnLogin, value); }
     public bool ServiceWatchdogEnabled { get => _serviceWatchdogEnabled; set => SetProperty(ref _serviceWatchdogEnabled, value); }
     public AdminScreenItemViewModel? SelectedScreen { get => _selectedScreen; set => SetProperty(ref _selectedScreen, value); }
+
+    public bool CacheMaintenanceEnabled { get => _cacheMaintenanceEnabled; set => SetProperty(ref _cacheMaintenanceEnabled, value); }
+    public int CacheMaintenanceIntervalMinutes { get => _cacheMaintenanceIntervalMinutes; set => SetProperty(ref _cacheMaintenanceIntervalMinutes, value); }
+    public string CacheMaintenanceScope { get => _cacheMaintenanceScope; set => SetProperty(ref _cacheMaintenanceScope, value); }
+    public bool CacheMaintenanceReloadAfterClear { get => _cacheMaintenanceReloadAfterClear; set => SetProperty(ref _cacheMaintenanceReloadAfterClear, value); }
+    public string CacheClearResult { get => _cacheClearResult; set => SetProperty(ref _cacheClearResult, value); }
 
     public AdminSettingsViewModel(
         IConfigService configService,
@@ -93,6 +106,13 @@ public sealed class AdminSettingsViewModel : ObservableObject
         SelectedScreen = Screens.FirstOrDefault();
         AutoStartOnLogin = _configService.CurrentConfig.General.AutoStartOnLogin;
         ServiceWatchdogEnabled = _configService.CurrentConfig.General.ServiceWatchdogEnabled;
+
+        var cm = _configService.CurrentConfig.General.CacheMaintenance;
+        CacheMaintenanceEnabled = cm.Enabled;
+        CacheMaintenanceIntervalMinutes = cm.IntervalMinutes;
+        CacheMaintenanceScope = cm.Scope;
+        CacheMaintenanceReloadAfterClear = cm.ReloadAfterClear;
+
         RefreshDisplayTiles();
         RefreshDiagnostics();
         _ = RefreshAutoStartStatusAsync();
@@ -139,7 +159,14 @@ public sealed class AdminSettingsViewModel : ObservableObject
             General = final.General with
             {
                 AutoStartOnLogin = AutoStartOnLogin,
-                ServiceWatchdogEnabled = ServiceWatchdogEnabled
+                ServiceWatchdogEnabled = ServiceWatchdogEnabled,
+                CacheMaintenance = final.General.CacheMaintenance with
+                {
+                    Enabled = CacheMaintenanceEnabled,
+                    IntervalMinutes = CacheMaintenanceIntervalMinutes,
+                    Scope = CacheMaintenanceScope,
+                    ReloadAfterClear = CacheMaintenanceReloadAfterClear
+                }
             }
         };
 
@@ -172,6 +199,23 @@ public sealed class AdminSettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             AutoStartStatusText = $"Auto-start status unavailable: {ex.Message}";
+        }
+    }
+
+    public async Task ClearCacheNowAsync()
+    {
+        CacheClearResult = "Clearing…";
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await _kioskSupervisor.ClearCacheAllAsync(CacheMaintenanceScope, CacheMaintenanceReloadAfterClear);
+            sw.Stop();
+            CacheClearResult = $"Cache cleared ({sw.ElapsedMilliseconds} ms).";
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Manual cache clear failed.");
+            CacheClearResult = $"Clear failed: {ex.Message}";
         }
     }
 
@@ -256,7 +300,16 @@ public sealed class AdminSettingsViewModel : ObservableObject
             General = config.General with
             {
                 AdminPinHash = "REDACTED"
-            }
+            },
+            Screens = config.Screens.Select(s => s with
+            {
+                Credentials = s.Credentials with
+                {
+                    EncryptedPassword = string.IsNullOrEmpty(s.Credentials.EncryptedPassword)
+                        ? string.Empty
+                        : "REDACTED"
+                }
+            }).ToList()
         };
 
         using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);

@@ -161,6 +161,46 @@ public partial class KioskWindow : Window
         });
     }
 
+    /// <summary>
+    /// Clears the shared WebView2 profile cache.
+    /// Scope "cacheOnly"     → DiskCache + CacheStorage only (session preserved).
+    /// Scope "cacheAndSession" → also Cookies + AllDomStorage (session cleared, triggers auto-login).
+    /// Returns true when the clear succeeded, false when no WebView2 is initialised.
+    /// </summary>
+    public async Task<bool> ClearCacheAsync(string scope)
+    {
+        if (_webView?.CoreWebView2 is null)
+        {
+            _logger.Warning(
+                "ClearCacheAsync: no live WebView2 for screen {ScreenId}. Skipping clear.",
+                _activeScreen?.Id);
+            return false;
+        }
+
+        var kinds = Microsoft.Web.WebView2.Core.CoreWebView2BrowsingDataKinds.DiskCache
+                  | Microsoft.Web.WebView2.Core.CoreWebView2BrowsingDataKinds.CacheStorage;
+
+        if (string.Equals(scope, "cacheAndSession", StringComparison.OrdinalIgnoreCase))
+        {
+            kinds |= Microsoft.Web.WebView2.Core.CoreWebView2BrowsingDataKinds.Cookies
+                   | Microsoft.Web.WebView2.Core.CoreWebView2BrowsingDataKinds.AllDomStorage;
+        }
+
+        _logger.Information(
+            "Clearing WebView2 cache. ScreenId: {ScreenId}, Scope: {Scope}",
+            _activeScreen?.Id,
+            scope);
+
+        await _webView.CoreWebView2.Profile.ClearBrowsingDataAsync(kinds);
+
+        _logger.Information(
+            "WebView2 cache cleared. ScreenId: {ScreenId}, Scope: {Scope}",
+            _activeScreen?.Id,
+            scope);
+
+        return true;
+    }
+
     public void ReassertTopmost()
     {
         _ = Dispatcher.InvokeAsync(() =>
@@ -579,6 +619,12 @@ public partial class KioskWindow : Window
                 return;
             }
 
+            if (string.Equals(messageType, "request-credentials", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleCredentialsRequest();
+                return;
+            }
+
             if (string.Equals(messageType, "page-error", StringComparison.OrdinalIgnoreCase))
             {
                 var message = json.RootElement.TryGetProperty("msg", out var msgElement)
@@ -635,6 +681,103 @@ public partial class KioskWindow : Window
         {
             // Ignore non-JSON payloads from host pages.
         }
+    }
+
+    /// <summary>
+    /// Handles a "request-credentials" message from the web page.
+    /// Validates the current page origin against the configured screen URL host,
+    /// then decrypts and delivers credentials via PostWebMessageAsJson — only when
+    /// auto-login is enabled and valid credentials are stored.
+    /// Credentials are never logged.
+    /// </summary>
+    private void HandleCredentialsRequest()
+    {
+        if (_activeScreen is null || _webView?.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        var credentials = _activeScreen.Credentials;
+
+        if (!credentials.AutoLoginEnabled)
+        {
+            _logger.Information(
+                "Credentials request received but auto-login is disabled. ScreenId: {ScreenId}",
+                _activeScreen.Id);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(credentials.Username) || string.IsNullOrEmpty(credentials.EncryptedPassword))
+        {
+            _logger.Warning(
+                "Credentials request received but no credentials are stored. ScreenId: {ScreenId}",
+                _activeScreen.Id);
+            return;
+        }
+
+        // Origin allow-list gate: the requesting page must come from the configured URL's host.
+        var currentSource = _webView.CoreWebView2.Source;
+        if (!IsOriginAllowed(currentSource, _activeScreen.Url))
+        {
+            _logger.Warning(
+                "Credentials request denied: page origin does not match configured host. " +
+                "ScreenId: {ScreenId}, PageSource: {PageSource}, ConfiguredUrl: {ConfiguredUrl}",
+                _activeScreen.Id,
+                currentSource,
+                _activeScreen.Url);
+            return;
+        }
+
+        var password = AdminCredentialsService.Unprotect(credentials.EncryptedPassword);
+        if (string.IsNullOrEmpty(password))
+        {
+            _logger.Warning(
+                "Credentials request: DPAPI decryption returned empty (blob may be from a different machine). ScreenId: {ScreenId}",
+                _activeScreen.Id);
+            return;
+        }
+
+        // Deliver credentials to the page. Username is safe to log; password is never logged.
+        _logger.Information(
+            "Delivering auto-login credentials. ScreenId: {ScreenId}, Username: {Username}",
+            _activeScreen.Id,
+            credentials.Username);
+
+        // Serialize manually to avoid any accidental logging via JSON serializer internals.
+        var usernameJson = System.Text.Json.JsonSerializer.Serialize(credentials.Username);
+        var passwordJson = System.Text.Json.JsonSerializer.Serialize(password);
+        var message = $"{{\"type\":\"credentials\",\"username\":{usernameJson},\"password\":{passwordJson}}}";
+
+        _webView.CoreWebView2.PostWebMessageAsJson(message);
+
+        // Clear password from local memory immediately.
+        password = null;
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="pageSource"/> belongs to the same host as <paramref name="configuredUrl"/>.
+    /// Both must be valid absolute http(s) URIs.
+    /// </summary>
+    private static bool IsOriginAllowed(string? pageSource, string configuredUrl)
+    {
+        if (string.IsNullOrEmpty(pageSource) || string.IsNullOrEmpty(configuredUrl))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(pageSource, UriKind.Absolute, out var pageUri))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(configuredUrl, UriKind.Absolute, out var configUri))
+        {
+            return false;
+        }
+
+        return string.Equals(pageUri.Host, configUri.Host, StringComparison.OrdinalIgnoreCase)
+            && pageUri.Port == configUri.Port
+            && string.Equals(pageUri.Scheme, configUri.Scheme, StringComparison.OrdinalIgnoreCase);
     }
 
     private async void OnHealthTick(object? sender, EventArgs e)

@@ -13,7 +13,7 @@ public enum AppType
 
 public sealed record AppConfig
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public DeviceInfo Device { get; init; } = new();
@@ -43,6 +43,7 @@ public sealed record GeneralSettings
     public string LogLevel { get; init; } = "Information";
     public CacheSettings Cache { get; init; } = new();
     public NightlyMaintenanceSettings NightlyMaintenance { get; init; } = new();
+    public CacheMaintenanceSettings CacheMaintenance { get; init; } = new();
     public string AdminPinHash { get; init; } = string.Empty;
 }
 
@@ -50,6 +51,18 @@ public sealed record CacheSettings
 {
     public bool Enabled { get; init; } = true;
     public bool ClearOnUpdate { get; init; } = true;
+}
+
+public sealed record CacheMaintenanceSettings
+{
+    public bool Enabled { get; init; } = true;
+    public int IntervalMinutes { get; init; } = 60;
+
+    /// <summary>"cacheOnly" clears DiskCache+CacheStorage (keeps session).
+    /// "cacheAndSession" also clears Cookies+AllDomStorage (logs out).</summary>
+    public string Scope { get; init; } = "cacheAndSession";
+
+    public bool ReloadAfterClear { get; init; } = true;
 }
 
 public sealed record NightlyMaintenanceSettings
@@ -79,6 +92,7 @@ public sealed record ScreenConfig
     public int ZoomPercent { get; init; } = 100;
     public List<string> AllowedDomains { get; init; } = [];
     public FallbackConfig Fallback { get; init; } = new();
+    public ScreenCredentials Credentials { get; init; } = new();
 }
 
 public sealed record FallbackConfig
@@ -86,6 +100,19 @@ public sealed record FallbackConfig
     public string Mode { get; init; } = "branded";
     public string CustomHtmlPath { get; init; } = string.Empty;
     public string ImagePath { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Per-screen saved credentials for kiosk auto-login after a cache clear.
+/// The password is stored as a DPAPI-encrypted base64 blob — never plaintext.
+/// </summary>
+public sealed record ScreenCredentials
+{
+    public bool AutoLoginEnabled { get; init; } = false;
+    public string Username { get; init; } = string.Empty;
+
+    /// <summary>DPAPI (LocalMachine) encrypted password, base64-encoded. Empty when not set.</summary>
+    public string EncryptedPassword { get; init; } = string.Empty;
 }
 
 public sealed class ConfigChangedEventArgs : EventArgs

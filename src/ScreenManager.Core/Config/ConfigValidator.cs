@@ -68,6 +68,28 @@ internal static class ConfigValidator
             diagnostics.Add("general.offlineTimeoutSec out of range and reset to 20.");
         }
 
+        var cacheMaintenance = general.CacheMaintenance ?? new CacheMaintenanceSettings();
+        var cacheIntervalMinutes = cacheMaintenance.IntervalMinutes;
+        if (cacheIntervalMinutes < 5)
+        {
+            cacheIntervalMinutes = 5;
+            diagnostics.Add($"general.cacheMaintenance.intervalMinutes below minimum (5); clamped to 5.");
+        }
+
+        var validScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "cacheOnly", "cacheAndSession" };
+        var cacheScope = cacheMaintenance.Scope;
+        if (!validScopes.Contains(cacheScope))
+        {
+            cacheScope = "cacheAndSession";
+            diagnostics.Add($"general.cacheMaintenance.scope '{cacheMaintenance.Scope}' invalid; reset to cacheAndSession.");
+        }
+
+        cacheMaintenance = cacheMaintenance with
+        {
+            IntervalMinutes = cacheIntervalMinutes,
+            Scope = cacheScope
+        };
+
         var screens = new List<ScreenConfig>();
         foreach (var screen in input.Screens ?? [])
         {
@@ -125,7 +147,8 @@ internal static class ConfigValidator
             General = general with
             {
                 RetryBackoffSec = retryBackoff,
-                OfflineTimeoutSec = offlineTimeoutSec
+                OfflineTimeoutSec = offlineTimeoutSec,
+                CacheMaintenance = cacheMaintenance
             },
             Screens = screens
         };
