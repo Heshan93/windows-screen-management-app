@@ -357,6 +357,8 @@ Auto-dismisses on reconnect; shows device/screen/connection/last-connected/retry
 | **Offline behaviour** | Detect via lightweight HTTP HEAD to a health endpoint + local TCP probe; show fallback; auto-reload on restore; distinguish *internet down* vs *local server down* vs *dashboard down* |
 | **Startup integration** | Per-machine Run key or Scheduled Task (log-on, restart-on-fail, highest privileges); single-instance mutex; optional service for pre-login |
 | **Remote config (future)** | Config is a serializable contract; add a pull-based sync client + device registration later without architectural change |
+| **Cache maintenance** | Admin-configurable interval (default 60 min) + on-demand clear via `CoreWebView2.Profile.ClearBrowsingDataAsync`; two scopes (`cacheOnly` / `cacheAndSession`); see §5.2 |
+| **Kiosk auto-login** | Per-screen saved credentials (username + DPAPI-encrypted password); origin-gated `request-credentials`→`credentials` WebView2 handshake so the web app re-authenticates after a cache clear; see §5.2 |
 | **Security** | ACL'd config in `%ProgramData%`, DPAPI-protected secrets, domain allow-list, PIN-gated admin, signed installer & updates |
 
 ### 5.1 Offline detection detail
@@ -365,6 +367,49 @@ Three independent signals, logged distinctly:
 2. **Local server**: HEAD to the configured app origin.
 3. **Dashboard** (future): HEAD to management endpoint.
 Fallback messaging names the *specific* outage. Auto-reload triggers only when the *relevant* signal recovers.
+
+### 5.2 Cache maintenance & kiosk auto-login (P13)
+
+**Problem:** in the field, a web app periodically misbehaves and the only known fix is to clear the browser cache and log back in. P13 automates both halves so the device self-heals unattended. Tracked as Phase P13 in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
+
+#### 5.2.1 Cache maintenance
+- **Shared profile:** all kiosk windows reuse one `CoreWebView2Environment`/user-data folder (`%ProgramData%\OrderBuddy\ScreenManager\webview2`), so a single `CoreWebView2.Profile.ClearBrowsingDataAsync(...)` clears the whole profile. (One screen per device in current deployment, but the supervisor loop stays generic.)
+- **Two admin-selectable scopes:**
+  - `cacheOnly` → `DiskCache | CacheStorage` — fixes stale-asset/memory bloat, **keeps login**.
+  - `cacheAndSession` → also `Cookies | AllDomStorage` — logs the session out, which then triggers auto-login (§5.2.2).
+- **Triggers:** (a) `CacheMaintenanceScheduler` — an admin-configurable interval timer (default 60 min, guarded ≥ 5), modeled on `NightlyMaintenanceScheduler`; (b) an on-demand **"Clear cache now"** admin button. A re-entrancy guard prevents timer/manual overlap. Clear is followed by a reload when `reloadAfterClear` is set.
+
+#### 5.2.2 Kiosk auto-login
+- **Storage:** per-screen `ScreenCredentials` = `AutoLoginEnabled`, `Username`, `EncryptedPassword`. The password is **DPAPI-encrypted (LocalMachine scope)** at rest via a new `AdminCredentialsService`; the plaintext password is **never** persisted or logged. Config already lives in ACL'd `%ProgramData%`.
+- **Delivery handshake** (over the existing WebView2 `WebMessageReceived` channel):
+  1. Page (when logged out) posts `{ "type": "request-credentials" }`.
+  2. Host verifies the WebView's top-level origin matches the screen's configured URL host (**allow-list gate**) and that auto-login is enabled with stored credentials.
+  3. Host decrypts and replies to that WebView only: `PostWebMessageAsJson({ "type": "credentials", "username": "...", "password": "..." })`.
+  4. Page fills its login form / calls its login endpoint and submits.
+- **Simplicity note:** raw username/password pass-through is intentional for now (no token exchange). A future hardening option is a one-time login token / dedicated auto-login endpoint so the raw password never enters the DOM — deferred until the web backend supports it.
+
+#### 5.2.3 Combined self-heal flow
+Hourly `cacheAndSession` clear → reload → page detects logged-out → `request-credentials` → origin-gated host response → web app auto-logs-in, with zero operator action.
+
+#### 5.2.4 Config schema additions (schemaVersion 2 → 3)
+```jsonc
+"general": {
+  "cacheMaintenance": {
+    "enabled": true,
+    "intervalMinutes": 60,
+    "scope": "cacheAndSession",   // "cacheOnly" | "cacheAndSession"
+    "reloadAfterClear": true
+  }
+},
+"screens": [{
+  "credentials": {
+    "autoLoginEnabled": false,
+    "username": "",
+    "encryptedPassword": ""       // DPAPI (LocalMachine) blob, base64
+  }
+}]
+```
+A `ConfigMigrator` step fills defaults for older files; the validator clamps `intervalMinutes` to the minimum and rejects unknown `scope` values. Credentials are excluded from the support-bundle export and all log sinks.
 
 ---
 

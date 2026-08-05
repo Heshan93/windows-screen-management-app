@@ -23,7 +23,8 @@
 | P10 | Auto-update & hardening | 6 | ⚠ deferred | Post-release hardening, not needed for local-first deployment |
 | P11 | Remote-ready hooks (optional) | 5 | ☐ 0/5 | Config pull behind flag, no regression |
 | P12 | QA, soak & release | 8 | ☐ 0/8 | Full test matrix green; 72h soak passes |
-| **Total** | | **96** | **◐ 77/96** | Production release |
+| P13 | Cache maintenance & kiosk auto-login | 15 | ☐ 0/15 | Hourly+manual cache clear; saved creds auto-login |
+| **Total** | | **111** | **◐ 77/111** | Production release |
 
 > Update the counts as tasks complete (e.g. `◐ 3/8`).
 > Current scope decision: for a local-first kiosk deployment on tills and other screens, **P10 is deferred**. A usable release target is **P9 complete + targeted P12 validation**, with manual deployment/signing handled separately as needed.
@@ -344,6 +345,85 @@
 
 ---
 
+## 15b. Phase P13 — Cache maintenance & kiosk auto-login  `depends: P2, P5, P7`
+
+**Goal:** Fix the recurring web-app fault where clearing the WebView2 cache and re-logging in restores correct behaviour, by (1) automatically clearing cache on an admin-configurable interval **and** on-demand, and (2) securely storing the kiosk username/password so the web app can silently re-authenticate after a clear — no manual login.
+
+> **Field context:** operators currently fix the misbehaving web app by manually clearing cache and logging back in. P13 automates both halves so the device self-heals unattended.
+
+### Design decisions (locked)
+1. **Both clear scopes supported, admin-selectable** — `cacheOnly` (A: `DiskCache` + `CacheStorage`, keeps login) and `cacheAndSession` (B: also `Cookies` + DOM storage, logs out → triggers auto-login).
+2. **Interval is admin-configurable** (`IntervalMinutes`, default 60, guarded ≥ 5).
+3. **Simple credential pass-through** — store raw username/password (no token exchange for now). Password is **DPAPI-encrypted at rest** (never plaintext); delivered to the page only over the existing WebView2 message channel, and only to the configured URL origin.
+4. **DPAPI scope = LocalMachine** — works regardless of the auto-start account; config already lives in ACL'd `%ProgramData%`.
+5. **One kiosk screen per device** — credentials are effectively a single set (hung off the single `ScreenConfig`); no multi-window coordination needed, but the supervisor loop stays generic.
+
+### Config schema additions (bump `schemaVersion` 2 → 3)
+```jsonc
+"general": {
+  "cacheMaintenance": {
+    "enabled": true,
+    "intervalMinutes": 60,
+    "scope": "cacheAndSession",   // "cacheOnly" | "cacheAndSession"
+    "reloadAfterClear": true
+  }
+},
+"screens": [{
+  "credentials": {
+    "autoLoginEnabled": false,
+    "username": "",
+    "encryptedPassword": ""       // DPAPI (LocalMachine) blob, base64; never plaintext
+  }
+}]
+```
+
+### Web ↔ native auto-login handshake (protocol contract for the web team)
+1. After (re)load, if logged out, the page posts: `{ "type": "request-credentials" }`.
+2. Native host verifies the WebView's current top-level origin matches the screen's configured URL host (allow-list gate) **and** `autoLoginEnabled` is true and credentials exist.
+3. Host decrypts and replies to that WebView only via `PostWebMessageAsJson`: `{ "type": "credentials", "username": "...", "password": "..." }`.
+4. Page fills its login form / calls its login endpoint and submits.
+> If the origin check fails or auto-login is disabled, the host logs and sends nothing.
+
+### Cache-clear tasks
+- [ ] **P13-1 (P0)** Add `CacheMaintenanceSettings` to `GeneralSettings` and bump `AppConfig.CurrentSchemaVersion` to 3 (`ConfigModels.cs`).
+  - *Accept:* new settings round-trip via `System.Text.Json`; defaults are `enabled=true, intervalMinutes=60, scope=cacheAndSession, reloadAfterClear=true`.
+- [ ] **P13-2 (P0)** Migration v2→v3 in `ConfigMigrator.cs` (fills defaults for older files) + validator range guard (`intervalMinutes` ≥ 5, valid `scope` enum) in `ConfigValidator.cs`.
+  - *Accept:* a v2 file loads as v3 with defaults; `intervalMinutes=1` is corrected to the min with a logged diagnostic.
+- [ ] **P13-3 (P0)** `KioskWindow.ClearCacheAsync(scope)` using `CoreWebView2.Profile.ClearBrowsingDataAsync(...)` — map `cacheOnly` → `DiskCache|CacheStorage`, `cacheAndSession` → also `Cookies|AllDomStorage`; then reload if configured.
+  - *Accept:* after a clear with `cacheAndSession`, the page is logged out and reloaded; with `cacheOnly` the session survives.
+- [ ] **P13-4 (P0)** `KioskSupervisor.ClearCacheAllAsync(scope, reload)` with a re-entrancy guard (timer + manual button cannot overlap); logs scope, duration, screens reloaded.
+  - *Accept:* concurrent manual+timer triggers run once; no exceptions when no live WebView exists.
+- [ ] **P13-5 (P0)** `CacheMaintenanceScheduler` (modeled on `NightlyMaintenanceScheduler`): interval timer, reschedule on `ConfigChanged`, DI registration + `Start()` in `App.xaml.cs`.
+  - *Accept:* changing the interval in admin reschedules without restart; disabling stops the timer.
+- [ ] **P13-6 (P1)** Admin **General** tab UI: enable toggle, interval (min), scope dropdown (`cacheOnly`/`cacheAndSession`), reload-after-clear toggle; wired through `AdminSettingsViewModel`.
+  - *Accept:* edits persist and take effect after Save.
+- [ ] **P13-7 (P1)** Admin **Diagnostics** tab **"Clear cache now"** button (confirmation + result text) calling `ClearCacheAllAsync` with the configured scope.
+  - *Accept:* button clears cache once and shows a success/duration result.
+
+### Auto-login tasks
+- [ ] **P13-8 (P0)** `AdminCredentialsService` in `ScreenManager.Core/Security` — DPAPI `Protect`/`Unprotect` (LocalMachine), base64 blob helpers.
+  - *Accept:* protect→unprotect round-trips; encrypted blob is not human-readable; unit-tested.
+- [ ] **P13-9 (P0)** Add `ScreenCredentials` (`AutoLoginEnabled`, `Username`, `EncryptedPassword`) to `ScreenConfig` (`ConfigModels.cs`).
+  - *Accept:* serializes with no plaintext password; absent section defaults to auto-login disabled.
+- [ ] **P13-10 (P1)** Admin per-screen credentials UI: Username textbox, `PasswordBox` (not two-way bound), Auto-login checkbox, "Clear saved credentials" button (`AdminSettingsWindow.xaml`/`.xaml.cs`, `AdminScreenItemViewModel`).
+  - *Accept:* entering a password and saving stores only the encrypted blob; clearing removes it.
+- [ ] **P13-11 (P0)** Save path encrypts the password via `AdminCredentialsService` before persist; decrypted values never logged or written to plaintext config (`AdminSettingsViewModel`).
+  - *Accept:* config file contains no plaintext password; logs contain no credential values.
+- [ ] **P13-12 (P0)** `request-credentials` handling in `KioskWindow.OnWebMessageReceived` with **origin allow-list gate**; respond via `PostWebMessageAsJson({type:"credentials",...})` only when origin matches configured host and auto-login is enabled.
+  - *Accept:* matching origin receives credentials; mismatched origin / disabled auto-login receives nothing (logged).
+- [ ] **P13-13 (P1)** Redaction: exclude credentials from the support-bundle export and confirm no credential leakage in any log sink.
+  - *Accept:* exported bundle's config has redacted credential fields; log scan shows none.
+
+### QA tasks
+- [ ] **P13-14 (P0)** Unit tests: scope→`BrowsingDataKinds` mapping, DPAPI round-trip, origin-gate accept/reject, migration v2→v3 defaults.
+  - *Accept:* all new tests green; existing suite unaffected.
+- [ ] **P13-15 (P0)** Manual E2E on target hardware: hourly (or shortened) clear with `cacheAndSession` logs the kiosk out, page requests credentials, host responds, web app auto-logs-in with no operator action.
+  - *Accept:* full self-heal cycle observed in logs end-to-end.
+
+**Exit gate:** cache clears automatically on the configured interval and on demand; after a `cacheAndSession` clear the kiosk silently re-authenticates from saved (encrypted) credentials with no manual login.
+
+---
+
 ## 16. Dependency graph (phase level)
 
 ```mermaid
@@ -363,6 +443,9 @@ flowchart LR
     P2 --> P11
     P6 --> P12
     P11 --> P12
+    P2 --> P13
+    P5 --> P13
+    P7 --> P13
 ```
 
 ---
@@ -405,6 +488,7 @@ flowchart LR
 | M7 Update & hardening | P10 |
 | M8 Remote-ready | P11 |
 | Release | P12 |
+| Cache maintenance & auto-login | P13 |
 
 ---
 
@@ -412,7 +496,7 @@ flowchart LR
 
 | Date | Phase/Task | Change / decision | By |
 |---|---|---|---|
-| 2026-07-23 | Post-P9 kiosk stability hotfix | Fixed two production kiosk issues reported from field behavior. **(1) Regular refreshes even when reload interval = 0:** confirmed the configured periodic reload timer already stops at `0`; the unwanted reloads were coming from the recovery path after heartbeat loss. `KioskWindow` now ignores heartbeat-timeout escalation while another process owns the foreground, which avoids false recovery reloads when WebView2 is background-throttled or visually occluded. **(2) Other apps appearing in front of the kiosk:** WPF `Topmost` alone was too weak for a hardened kiosk surface. `KioskWindow` now enforces native top-most priority with `SetWindowPos`, periodically reclaims the foreground from non-allowed apps, and leaves support/admin tools visible via an allowlist (`taskmgr`, `anydesk`, common remote-support process names) extendable through `ORDERBUDDY_FOREGROUND_ALLOWLIST`. Validation: `dotnet build src/ScreenManager.App/ScreenManager.App.csproj` passed with 0 warnings/0 errors; focused recovery tests in `P5HealthMonitorTests` passed 6/6. Manual multi-app foreground validation on target hardware still pending under P12 kiosk/recovery QA. | — |
+| 2026-08-05 | P13 planned | Added **Phase P13 — Cache maintenance & kiosk auto-login** (15 tasks) to address a field-reported web-app fault that operators currently fix by manually clearing the WebView2 cache and logging back in. P13 automates both halves: **(1) Cache maintenance** — an admin-configurable interval clear (default 60 min, guarded ≥ 5) plus an on-demand "Clear cache now" button, with two selectable scopes: `cacheOnly` (`DiskCache`+`CacheStorage`, keeps login) and `cacheAndSession` (also `Cookies`+DOM storage, logs out). Uses `CoreWebView2.Profile.ClearBrowsingDataAsync`; a new `CacheMaintenanceScheduler` mirrors `NightlyMaintenanceScheduler`; clear+reload flows through `KioskSupervisor`. **(2) Kiosk auto-login** — per-screen saved credentials (`ScreenCredentials`: username + DPAPI-LocalMachine-encrypted password + auto-login flag) delivered to the web app over the existing WebView2 `WebMessageReceived` channel via a `request-credentials`→`credentials` handshake, gated by an origin allow-list check against the configured URL host. **Locked decisions:** both scopes supported/admin-selectable; interval admin-configurable; simple raw username/password pass-through (no token exchange for now) but DPAPI-encrypted at rest and origin-gated; DPAPI LocalMachine scope; one kiosk screen per device (single credential set, generic supervisor loop retained). Config `schemaVersion` bumps 2→3 with a migration + validator range guard. Credentials excluded from support-bundle export and all logs. Corresponding architecture recorded in DESIGN.md §5.2. No code yet — planning/tracking only. | — | Fixed two production kiosk issues reported from field behavior. **(1) Regular refreshes even when reload interval = 0:** confirmed the configured periodic reload timer already stops at `0`; the unwanted reloads were coming from the recovery path after heartbeat loss. `KioskWindow` now ignores heartbeat-timeout escalation while another process owns the foreground, which avoids false recovery reloads when WebView2 is background-throttled or visually occluded. **(2) Other apps appearing in front of the kiosk:** WPF `Topmost` alone was too weak for a hardened kiosk surface. `KioskWindow` now enforces native top-most priority with `SetWindowPos`, periodically reclaims the foreground from non-allowed apps, and leaves support/admin tools visible via an allowlist (`taskmgr`, `anydesk`, common remote-support process names) extendable through `ORDERBUDDY_FOREGROUND_ALLOWLIST`. Validation: `dotnet build src/ScreenManager.App/ScreenManager.App.csproj` passed with 0 warnings/0 errors; focused recovery tests in `P5HealthMonitorTests` passed 6/6. Manual multi-app foreground validation on target hardware still pending under P12 kiosk/recovery QA. | — |
 | 2026-07-15 | Runtime diagnostics + save stability hardening | Added end-to-end diagnostics for the reported menuvue/tinypay and zoom-save issues, without assumptions: (1) `ConfigChangedEventArgs` now carries `Source`, `ChangeId`, and diagnostics, so logs can correlate each save/watcher event through app/supervisor/window handlers. (2) `ConfigService.SaveAsync` now detects no-op saves and skips write/event fan-out (prevents duplicate reconcile storms from repeated Save clicks), while still emitting deterministic events for real changes. (3) Removed over-broad post-save watcher suppression window that could hide legitimate external edits shortly after startup; JSON equality checks remain the dedupe guard. (4) Admin save path now logs staged values and persisted post-save values per screen; save button is guarded against re-entrant/duplicate clicks. (5) Zoom normalization now clamps to supported bounds (below 25 -> 25, above 500 -> 500) with explicit diagnostics, so entering `20` no longer appears as a random unsaved value reset to 100. (6) Kiosk runtime logs now include page diagnostics snapshots (href/title/readyState/zoom/devicePixelRatio) and page JS error/rejection telemetry. Local verification: both reported URLs return HTTP 200 from this device; app startup on menuvue logs `Navigation completed successfully` and `Page diagnostics snapshot ... ZoomFactor: 0.5` with the configured 50% zoom applied. Tests updated and passing (44/44). | — |
 | 2026-07-15 | Real-world fixes round 2 + live validation | **Follow-up fixes after a second round of hardware testing, validated live.** (1) **Zoom now saves:** the admin Zoom/Rotation/Reload/Startup TextBoxes bound with the default `LostFocus` trigger and weren't reliably committing before Save — switched to `UpdateSourceTrigger=PropertyChanged`. (2) **Admin window crash fixed:** `AdminSettingsViewModel.RefreshDisplayTiles()` threw `ArgumentNullException` when any screen had a null/empty or duplicate `DisplayKey` (e.g. the built-in welcome screen or an unassigned screen) — it now filters empty keys and uses `GroupBy` to dedupe, so admin always opens. (3) **Corner cue only after the 3rd tap:** the ripple + \"Admin n/5\" badge no longer appears on taps 1–2, reducing accidental customer confusion (still opens on the 5th tap). (4) **PIN pad + settings open on the triggering screen:** `OpenAdminSettingsAsync` now sets `Owner` + `CenterOwner` + `Topmost` so the keypad appears on whichever display the operator tapped/keyed (works from screens 2/3 when screen 1 is disabled). **Live validation** (ran the built app, changed config externally): logs confirmed `Applied settings in place. ZoomPercent: 70`, `Applying updated URL in place`, and `Navigation completed successfully (200)` with **no restart** — plus `Admin corner gesture detected via WebView`. Unit tests extended to 42/42 (added `SaveAsync_RaisesConfigChangedEvent` and URL-normalization theory). | — |
 | 2026-07-14 | Real-world till/kiosk fixes (5 issues) | **Fixed 5 issues found testing on real till/kiosk hardware.** **(1) Settings not applying without restart (root cause):** `ConfigService.SaveAsync` wrote the file + updated `CurrentConfig` but never raised `ConfigChanged` (the `FileSystemWatcher` is suppressed during internal saves via `_isInternalSave`), so kiosk windows only picked changes up after an unrelated watcher race or an app restart. `SaveAsync` now raises `ConfigChanged` deterministically after the write. `KioskSupervisor` marshals reconciles to the UI thread, and `KioskWindow.ApplyBinding` applies changes **in place** (instant zoom, navigate only when the URL changed) instead of a cold WebView restart. **(2) Corner 5-tap admin gesture dead + no visual cue:** the WebView2 is a windowed HWND control that swallows WPF mouse input, so the `AdminTapHotspot` (behind it via airspace) never received taps. Replaced with **injected JS** that detects 5 taps in the top-right 140px zone within 3s, shows a **blue ripple + \"Admin n/5\" badge** cue on each tap, and posts an `admin-gesture` web message the host handles to open the PIN pad. **(3) Fresh setup always made 3 screens on single-display PCs:** the wizard now creates **exactly one screen per detected display**. **(4) Wizard was placeholder-only:** rebuilt `SetupWizardWindow` into a functional single-page form listing each detected display with editable Name/Type/URL. **(5) Zoom not applying:** WebView2 resets `ZoomFactor` across navigations, so configured zoom was lost; it is now re-asserted on `NavigationCompleted` and applied in place on config change. Added friendly URL normalization (`mypos.local/app` → `https://mypos.local/app`; invalid text still falls back to `https://example.org`). **Known limitation:** WebView2 content rotation via WPF `LayoutTransform` does not rotate the native surface — to be addressed separately. **Validation:** build 0 warnings/0 errors; 36/36 tests pass. | — |
