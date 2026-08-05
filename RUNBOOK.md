@@ -72,7 +72,111 @@ msiexec /i "ScreenManager.Installer.msi" /qn /norestart
 
 ---
 
-## 4. First launch — Setup Wizard
+## 4. Running the app from the terminal (development)
+
+> Use this during development or to test changes without installing via MSI.
+> You need the **.NET 8 SDK** installed and a copy of the source code.
+
+### Quick start — run directly
+
+Open a terminal in the repo root (`v2\`) and run:
+
+```powershell
+dotnet run --project src/ScreenManager.App/ScreenManager.App.csproj
+```
+
+The app starts exactly as it would when installed. On first run it launches the Setup Wizard.
+
+### Build only (no run)
+
+```powershell
+# Debug build (fast, includes debug symbols)
+dotnet build src/ScreenManager.App/ScreenManager.App.csproj
+
+# Release build (optimised, what gets shipped)
+dotnet build src/ScreenManager.App/ScreenManager.App.csproj -c Release
+```
+
+A clean build should report `0 Warning(s)` and `0 Error(s)`.
+
+### Run the tests
+
+```powershell
+dotnet test tests/ScreenManager.Tests/ScreenManager.Tests.csproj
+```
+
+All tests should show `Passed! - Failed: 0`.
+
+### Run tests with detail (see each test name)
+
+```powershell
+dotnet test tests/ScreenManager.Tests/ScreenManager.Tests.csproj --logger "console;verbosity=normal"
+```
+
+### Build the whole solution at once
+
+```powershell
+dotnet build OrderBuddy.ScreenManager.sln
+```
+
+---
+
+## 5. Building and packaging a release
+
+> Use this to produce the MSI installer and the ready-to-ship deploy folder.
+> Run from the repo root (`v2\`) in an **elevated PowerShell** prompt.
+
+### Step 1 — Build and package (unsigned)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1
+```
+
+This will:
+1. Publish a self-contained single-file `ScreenManager.App.exe` for Windows x64
+2. Build `ScreenManager.Installer.msi`
+3. Assemble `artifacts\deploy\` — the folder you copy to the target PC
+
+Output locations:
+
+| File | Path |
+|---|---|
+| Compiled exe | `artifacts\publish\win-x64\ScreenManager.App.exe` |
+| MSI installer | `src\ScreenManager.Packaging\ScreenManager.Installer\bin\x64\Release\ScreenManager.Installer.msi` |
+| **Deploy folder** | `artifacts\deploy\` ← **copy this to the target PC** |
+
+### Step 2 — Install on the target PC
+
+Copy the entire `artifacts\deploy\` folder to the target PC, then double-click `Install-OrderBuddy.bat`.
+
+### Optional — sign the MSI with a certificate
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1 `
+    -CertificateThumbprint "YOUR_CERT_THUMBPRINT_HERE" `
+    -TimeStampUrl "http://timestamp.digicert.com"
+```
+
+Replace `YOUR_CERT_THUMBPRINT_HERE` with the SHA1 thumbprint of your code-signing certificate (visible in the Windows Certificate Manager). `signtool.exe` (from the Windows SDK) must be in your PATH.
+
+### Optional — redirect build output to another drive
+
+If your `C:` drive is low on space (publish output is ~180 MB):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1 -BuildRoot "E:\OrderBuddyBuild"
+```
+
+### Validate the MSI before shipping
+
+```powershell
+# Elevated prompt — installs, checks, then uninstalls automatically
+powershell -ExecutionPolicy Bypass -File scripts\validate-installer.ps1
+```
+
+---
+
+## 6. First launch — Setup Wizard
 
 On first run (no `config.json` exists), the app launches a **6-step setup wizard**:
 
@@ -89,7 +193,7 @@ After the wizard, each screen shows its assigned web app full-screen.
 
 ---
 
-## 5. Accessing admin settings (after lockdown)
+## 7. Accessing admin settings (after lockdown)
 
 The app is locked down — you can't close it, alt-tab, or access the desktop normally. To change settings:
 
@@ -107,7 +211,7 @@ Press **`Ctrl + Shift + F12`** → PIN pad appears.
 
 ---
 
-## 6. Admin Settings panel
+## 8. Admin Settings panel
 
 After PIN unlock, the settings window opens with these tabs:
 
@@ -168,7 +272,7 @@ After PIN unlock, the settings window opens with these tabs:
 
 ---
 
-## 7. Adding a new screen
+## 9. Adding a new screen
 
 1. **Plug in the monitor.** The app detects it automatically within ~1 second.
 2. Open admin settings (5 corner taps or `Ctrl+Shift+F12`, enter PIN).
@@ -178,7 +282,7 @@ After PIN unlock, the settings window opens with these tabs:
 
 ---
 
-## 8. Removing a screen
+## 10. Removing a screen
 
 Just **unplug the monitor**. The app:
 - Closes that screen's window
@@ -188,7 +292,7 @@ Just **unplug the monitor**. The app:
 
 ---
 
-## 9. What happens when things go wrong
+## 11. What happens when things go wrong
 
 ### Web app is down / no internet
 The screen shows a **branded fallback overlay** with:
@@ -210,7 +314,7 @@ The app auto-starts on login, reads saved config, and restores all screens to th
 
 ---
 
-## 10. File locations
+## 12. File locations
 
 | What | Where |
 |---|---|
@@ -225,7 +329,7 @@ Log files rotate daily, keep 14 days, max 10 MB each.
 
 ---
 
-## 11. Uninstalling
+## 13. Uninstalling
 
 From an elevated PowerShell:
 
@@ -242,7 +346,7 @@ It does **not** remove config or logs in ProgramData (so you can reinstall witho
 
 ---
 
-## 12. Upgrading
+## 14. Upgrading
 
 Just install the new MSI over the old one:
 
@@ -254,7 +358,7 @@ The MSI uses major-upgrade — it removes the old version and installs the new o
 
 ---
 
-## 13. Troubleshooting
+## 15. Troubleshooting
 
 | Problem | Solution |
 |---|---|
@@ -269,20 +373,36 @@ The MSI uses major-upgrade — it removes the old version and installs the new o
 
 ---
 
-## 14. Quick reference card
+## 16. Quick reference card
 
 ```
-INSTALL:    powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-            (elevated prompt required)
+─── INSTALL / DEPLOY ─────────────────────────────────────────────────────────
+INSTALL (easy):    Double-click  artifacts\deploy\Install-OrderBuddy.bat
+INSTALL (silent):  msiexec /i "ScreenManager.Installer.msi" /qn /norestart
+UPGRADE:           msiexec /i "ScreenManager.Installer.msi" /qn /norestart
+UNINSTALL:         msiexec /x "ScreenManager.Installer.msi" /qn /norestart
 
-OPEN ADMIN: Ctrl+Shift+F12  or  5 taps top-right corner
-DEFAULT PIN: 1234
+─── DEVELOPMENT ──────────────────────────────────────────────────────────────
+RUN (dev):         dotnet run --project src/ScreenManager.App/ScreenManager.App.csproj
+BUILD (debug):     dotnet build src/ScreenManager.App/ScreenManager.App.csproj
+BUILD (release):   dotnet build src/ScreenManager.App/ScreenManager.App.csproj -c Release
+RUN TESTS:         dotnet test tests/ScreenManager.Tests/ScreenManager.Tests.csproj
+BUILD SOLUTION:    dotnet build OrderBuddy.ScreenManager.sln
 
-CONFIG:     C:\ProgramData\OrderBuddy\ScreenManager\config.json
-LOGS:       C:\ProgramData\OrderBuddy\ScreenManager\logs\
+─── PACKAGING ────────────────────────────────────────────────────────────────
+PACKAGE (unsigned): powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1
+PACKAGE (signed):   powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1 `
+                        -CertificateThumbprint "THUMBPRINT" `
+                        -TimeStampUrl "http://timestamp.digicert.com"
+VALIDATE MSI:       powershell -ExecutionPolicy Bypass -File scripts\validate-installer.ps1
 
-UNINSTALL:  msiexec /x "ScreenManager.Installer.msi" /qn /norestart
-UPGRADE:    msiexec /i "ScreenManager.Installer.msi" /qn /norestart
+─── ADMIN / RUNTIME ──────────────────────────────────────────────────────────
+OPEN ADMIN:    Ctrl+Shift+F12  OR  5 taps top-right corner
+DEFAULT PIN:   1234
+RESET PIN:     Clear "AdminPinHash" in config.json → restarts as 1234
 
-RESET PIN:  Clear "AdminPinHash" in config.json → restarts as 1234
+─── FILE PATHS ───────────────────────────────────────────────────────────────
+CONFIG:        C:\ProgramData\OrderBuddy\ScreenManager\config.json
+LOGS:          C:\ProgramData\OrderBuddy\ScreenManager\logs\
+WEBVIEW CACHE: C:\ProgramData\OrderBuddy\ScreenManager\webview2\
 ```

@@ -90,6 +90,20 @@ internal static class ConfigValidator
             Scope = cacheScope
         };
 
+        var cacheIdleMinutes = cacheMaintenance.IdleThresholdMinutes;
+        if (cacheIdleMinutes < 0)
+        {
+            cacheIdleMinutes = 0;
+            diagnostics.Add("general.cacheMaintenance.idleThresholdMinutes below 0; reset to 0 (clear immediately).");
+        }
+        else if (cacheIdleMinutes > 60)
+        {
+            cacheIdleMinutes = 60;
+            diagnostics.Add("general.cacheMaintenance.idleThresholdMinutes above maximum (60); clamped to 60.");
+        }
+
+        cacheMaintenance = cacheMaintenance with { IdleThresholdMinutes = cacheIdleMinutes };
+
         var screens = new List<ScreenConfig>();
         foreach (var screen in input.Screens ?? [])
         {

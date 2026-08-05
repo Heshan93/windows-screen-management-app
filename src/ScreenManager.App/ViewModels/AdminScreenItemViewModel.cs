@@ -22,6 +22,7 @@ public sealed class AdminScreenItemViewModel : ObservableObject
     // Credentials (P13)
     private bool _autoLoginEnabled;
     private string _credentialUsername = string.Empty;
+    private string _kioskId = string.Empty;
 
     /// <summary>
     /// Plain-text password as entered by the admin. Kept in memory only while the
@@ -47,6 +48,7 @@ public sealed class AdminScreenItemViewModel : ObservableObject
 
     public bool AutoLoginEnabled { get => _autoLoginEnabled; set => SetProperty(ref _autoLoginEnabled, value); }
     public string CredentialUsername { get => _credentialUsername; set => SetProperty(ref _credentialUsername, value); }
+    public string KioskId { get => _kioskId; set => SetProperty(ref _kioskId, value); }
 
     /// <summary>True when the screen already has an encrypted password stored in config.</summary>
     public bool HasStoredPassword { get; set; }
@@ -71,6 +73,7 @@ public sealed class AdminScreenItemViewModel : ObservableObject
             FallbackHtmlPath = screen.Fallback.CustomHtmlPath,
             AutoLoginEnabled = screen.Credentials.AutoLoginEnabled,
             CredentialUsername = screen.Credentials.Username,
+            KioskId = screen.Credentials.KioskId,
             HasStoredPassword = !string.IsNullOrEmpty(screen.Credentials.EncryptedPassword),
             PlainTextPassword = string.Empty   // never populated from config
         };
@@ -108,6 +111,7 @@ public sealed class AdminScreenItemViewModel : ObservableObject
             {
                 AutoLoginEnabled = AutoLoginEnabled,
                 Username = CredentialUsername,
+                KioskId = KioskId,
                 EncryptedPassword = encryptedPassword
             }
         };

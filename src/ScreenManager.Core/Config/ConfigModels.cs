@@ -63,6 +63,14 @@ public sealed record CacheMaintenanceSettings
     public string Scope { get; init; } = "cacheAndSession";
 
     public bool ReloadAfterClear { get; init; } = true;
+
+    /// <summary>
+    /// Minimum minutes of user inactivity required before the cache is cleared.
+    /// 0 = clear immediately regardless of activity.
+    /// When the screen is active (e.g. customer placing an order), the clear is
+    /// deferred and retried every minute until the idle threshold is met.
+    /// </summary>
+    public int IdleThresholdMinutes { get; init; } = 5;
 }
 
 public sealed record NightlyMaintenanceSettings
@@ -105,6 +113,8 @@ public sealed record FallbackConfig
 /// <summary>
 /// Per-screen saved credentials for kiosk auto-login after a cache clear.
 /// The password is stored as a DPAPI-encrypted base64 blob — never plaintext.
+/// KioskId is a user-assigned identifier sent to the web app so it can load
+/// the correct kiosk configuration when multiple devices share the same location.
 /// </summary>
 public sealed record ScreenCredentials
 {
@@ -113,6 +123,12 @@ public sealed record ScreenCredentials
 
     /// <summary>DPAPI (LocalMachine) encrypted password, base64-encoded. Empty when not set.</summary>
     public string EncryptedPassword { get; init; } = string.Empty;
+
+    /// <summary>
+    /// User-assigned kiosk identifier (e.g. "KIOSK-01", "TILL-2").
+    /// Passed to the web app alongside credentials so it knows which device configuration to load.
+    /// </summary>
+    public string KioskId { get; init; } = string.Empty;
 }
 
 public sealed class ConfigChangedEventArgs : EventArgs

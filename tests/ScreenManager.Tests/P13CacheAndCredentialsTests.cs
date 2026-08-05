@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using OrderBuddy.ScreenManager.Core;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Security;
 
@@ -80,6 +81,7 @@ public sealed class P13CacheAndCredentialsTests
         s.IntervalMinutes.Should().Be(60);
         s.Scope.Should().Be("cacheAndSession");
         s.ReloadAfterClear.Should().BeTrue();
+        s.IdleThresholdMinutes.Should().Be(5);
     }
 
     [Fact]
@@ -103,6 +105,7 @@ public sealed class P13CacheAndCredentialsTests
         c.AutoLoginEnabled.Should().BeFalse();
         c.Username.Should().BeEmpty();
         c.EncryptedPassword.Should().BeEmpty();
+        c.KioskId.Should().BeEmpty();
     }
 
     [Fact]
@@ -114,12 +117,14 @@ public sealed class P13CacheAndCredentialsTests
             {
                 AutoLoginEnabled = true,
                 Username = "admin",
+                KioskId = "KIOSK-01",
                 EncryptedPassword = AdminCredentialsService.Protect("secret")
             }
         };
         var json = JsonSerializer.Serialize(screen);
         json.Should().NotContain("secret");
         json.Should().Contain("admin");
+        json.Should().Contain("KIOSK-01");
         json.Should().Contain("EncryptedPassword");
     }
 
@@ -224,6 +229,84 @@ public sealed class P13CacheAndCredentialsTests
         };
         var result = ConfigValidator.Normalize(config);
         result.NormalizedConfig.General.CacheMaintenance.Scope.Should().Be(scope);
+    }
+
+    [Fact]
+    public void ConfigValidator_IdleThresholdBelowZero_ClampsToZero()
+    {
+        var config = AppConfig.CreateDefault() with
+        {
+            General = AppConfig.CreateDefault().General with
+            {
+                CacheMaintenance = new CacheMaintenanceSettings { IdleThresholdMinutes = -1 }
+            }
+        };
+        var result = ConfigValidator.Normalize(config);
+        result.NormalizedConfig.General.CacheMaintenance.IdleThresholdMinutes.Should().Be(0);
+        result.Diagnostics.Should().Contain(d => d.Contains("idleThresholdMinutes"));
+    }
+
+    [Fact]
+    public void ConfigValidator_IdleThresholdAbove60_ClampsTo60()
+    {
+        var config = AppConfig.CreateDefault() with
+        {
+            General = AppConfig.CreateDefault().General with
+            {
+                CacheMaintenance = new CacheMaintenanceSettings { IdleThresholdMinutes = 120 }
+            }
+        };
+        var result = ConfigValidator.Normalize(config);
+        result.NormalizedConfig.General.CacheMaintenance.IdleThresholdMinutes.Should().Be(60);
+        result.Diagnostics.Should().Contain(d => d.Contains("idleThresholdMinutes"));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    [InlineData(60)]
+    public void ConfigValidator_ValidIdleThreshold_PassesThrough(int minutes)
+    {
+        var config = AppConfig.CreateDefault() with
+        {
+            General = AppConfig.CreateDefault().General with
+            {
+                CacheMaintenance = new CacheMaintenanceSettings { IdleThresholdMinutes = minutes }
+            }
+        };
+        var result = ConfigValidator.Normalize(config);
+        result.NormalizedConfig.General.CacheMaintenance.IdleThresholdMinutes.Should().Be(minutes);
+    }
+
+    // -----------------------------------------------------------------------
+    // KioskIdleDetector — zero threshold always idle; real idle duration test
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void KioskIdleDetector_ZeroThreshold_AlwaysIdle()
+    {
+        // A threshold of zero means "always clear immediately" regardless of activity.
+        KioskIdleDetector.IsIdle(TimeSpan.Zero).Should().BeTrue();
+    }
+
+    [Fact]
+    public void KioskIdleDetector_GetIdleDuration_ReturnsNonNegative()
+    {
+        // We can't control when the last input was, but the duration is always >= 0.
+        KioskIdleDetector.GetIdleDuration().Should().BeGreaterThanOrEqualTo(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void KioskIdleDetector_VeryLargeThreshold_NotIdleOnActiveSystem()
+    {
+        // On an actively-used dev machine the last input was very recent,
+        // so a 60-minute threshold should not be satisfied.
+        // This test is skipped in CI environments where there may be no input at all.
+        var idle = KioskIdleDetector.GetIdleDuration();
+        if (idle < TimeSpan.FromMinutes(5))
+        {
+            KioskIdleDetector.IsIdle(TimeSpan.FromHours(1)).Should().BeFalse();
+        }
     }
 
     // -----------------------------------------------------------------------

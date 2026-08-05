@@ -737,16 +737,18 @@ public partial class KioskWindow : Window
             return;
         }
 
-        // Deliver credentials to the page. Username is safe to log; password is never logged.
+        // Deliver credentials to the page. Username and KioskId are safe to log; password is never logged.
         _logger.Information(
-            "Delivering auto-login credentials. ScreenId: {ScreenId}, Username: {Username}",
+            "Delivering auto-login credentials. ScreenId: {ScreenId}, Username: {Username}, KioskId: {KioskId}",
             _activeScreen.Id,
-            credentials.Username);
+            credentials.Username,
+            credentials.KioskId);
 
         // Serialize manually to avoid any accidental logging via JSON serializer internals.
         var usernameJson = System.Text.Json.JsonSerializer.Serialize(credentials.Username);
         var passwordJson = System.Text.Json.JsonSerializer.Serialize(password);
-        var message = $"{{\"type\":\"credentials\",\"username\":{usernameJson},\"password\":{passwordJson}}}";
+        var kioskIdJson = System.Text.Json.JsonSerializer.Serialize(credentials.KioskId);
+        var message = $"{{\"type\":\"credentials\",\"username\":{usernameJson},\"password\":{passwordJson},\"kioskId\":{kioskIdJson}}}";
 
         _webView.CoreWebView2.PostWebMessageAsJson(message);
 

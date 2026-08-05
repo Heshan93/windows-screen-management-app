@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using System.Windows.Threading;
 using System.Threading;
+using OrderBuddy.ScreenManager.Core;
 using OrderBuddy.ScreenManager.Core.Config;
 using OrderBuddy.ScreenManager.Core.Display;
 using Serilog;
@@ -61,18 +62,37 @@ public sealed class KioskSupervisor : IDisposable
     /// Clears the shared WebView2 profile cache on all live windows (one clear suffices
     /// since the profile is shared) and optionally reloads all windows afterward.
     /// A re-entrancy guard prevents concurrent timer/manual clears from overlapping.
+    /// When <paramref name="idleThresholdMinutes"/> is &gt; 0, the clear is skipped and
+    /// returns <c>false</c> if the system has received user input more recently than the
+    /// threshold — the caller should retry later.
+    /// Returns <c>true</c> when the cache was actually cleared, <c>false</c> when deferred.
     /// </summary>
-    public async Task ClearCacheAllAsync(string scope, bool reloadAfter)
+    public async Task<bool> ClearCacheAllAsync(string scope, bool reloadAfter, int idleThresholdMinutes = 0)
     {
         if (_disposed)
         {
-            return;
+            return false;
+        }
+
+        // Idle check — skip if user is actively using the screen.
+        if (idleThresholdMinutes > 0)
+        {
+            var threshold = TimeSpan.FromMinutes(idleThresholdMinutes);
+            if (!KioskIdleDetector.IsIdle(threshold))
+            {
+                var idleDuration = KioskIdleDetector.GetIdleDuration();
+                _logger.Information(
+                    "Cache clear deferred: screen is active. " +
+                    "IdleThreshold: {Threshold} min, CurrentIdle: {CurrentIdle:mm\\:ss}. Will retry.",
+                    idleThresholdMinutes, idleDuration);
+                return false;
+            }
         }
 
         if (Interlocked.CompareExchange(ref _cacheClearInProgress, 1, 0) != 0)
         {
             _logger.Warning("ClearCacheAllAsync: another clear is already in progress. Skipping.");
-            return;
+            return false;
         }
 
         try
@@ -111,6 +131,8 @@ public sealed class KioskSupervisor : IDisposable
             {
                 ReloadAllWindows("cache-clear");
             }
+
+            return cleared;
         }
         finally
         {

@@ -72,25 +72,54 @@ public sealed class CacheMaintenanceScheduler : ICacheMaintenanceScheduler, IDis
         try
         {
             var maintenance = _configService.CurrentConfig.General.CacheMaintenance;
-            if (maintenance.Enabled)
-            {
-                _logger.Information(
-                    "Scheduled cache maintenance started. Scope: {Scope}, ReloadAfter: {ReloadAfter}",
-                    maintenance.Scope, maintenance.ReloadAfterClear);
-
-                _ = _kioskSupervisor.ClearCacheAllAsync(maintenance.Scope, maintenance.ReloadAfterClear);
-            }
-            else
+            if (!maintenance.Enabled)
             {
                 _logger.Debug("Scheduled cache maintenance tick: disabled in config, skipping.");
+                lock (_sync)
+                {
+                    if (_started) RescheduleUnsafe(maintenance);
+                }
+                return;
             }
+
+            _logger.Information(
+                "Scheduled cache maintenance started. Scope: {Scope}, ReloadAfter: {ReloadAfter}, IdleThreshold: {IdleThreshold} min",
+                maintenance.Scope, maintenance.ReloadAfterClear, maintenance.IdleThresholdMinutes);
+
+            var clearTask = _kioskSupervisor.ClearCacheAllAsync(
+                maintenance.Scope,
+                maintenance.ReloadAfterClear,
+                maintenance.IdleThresholdMinutes);
+
+            clearTask.ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    _logger.Error(t.Exception, "Scheduled cache maintenance execution failed.");
+                }
+
+                lock (_sync)
+                {
+                    if (!_started) return;
+
+                    bool cleared = !t.IsFaulted && t.Result;
+                    if (!cleared && maintenance.IdleThresholdMinutes > 0)
+                    {
+                        // Screen was active — retry in 1 minute rather than waiting the full interval.
+                        _logger.Information(
+                            "Cache clear deferred due to activity. Retrying in 1 minute.");
+                        ScheduleRetryUnsafe();
+                    }
+                    else
+                    {
+                        RescheduleUnsafe(maintenance);
+                    }
+                }
+            }, System.Threading.Tasks.TaskScheduler.Default);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Scheduled cache maintenance execution failed.");
-        }
-        finally
-        {
+            _logger.Error(ex, "Scheduled cache maintenance tick failed unexpectedly.");
             lock (_sync)
             {
                 if (_started)
@@ -99,6 +128,14 @@ public sealed class CacheMaintenanceScheduler : ICacheMaintenanceScheduler, IDis
                 }
             }
         }
+    }
+
+    private void ScheduleRetryUnsafe()
+    {
+        _timer?.Dispose();
+        _timer = new System.Threading.Timer(OnTimerTick, null,
+            TimeSpan.FromMinutes(1),
+            System.Threading.Timeout.InfiniteTimeSpan);
     }
 
     private void RescheduleUnsafe(CacheMaintenanceSettings maintenance)

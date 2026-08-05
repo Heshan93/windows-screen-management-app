@@ -168,6 +168,13 @@
                                              Text="{Binding SelectedScreen.CredentialUsername, UpdateSourceTrigger=PropertyChanged}"
                                              TextChanged="MarkDirty_TextChanged"/>
                                 </WrapPanel>
+                                <WrapPanel Margin="0,0,0,8">
+                                    <TextBlock Text="Kiosk ID" VerticalAlignment="Center" Margin="0,0,8,0" Width="80"/>
+                                    <TextBox Width="220"
+                                             Text="{Binding SelectedScreen.KioskId, UpdateSourceTrigger=PropertyChanged}"
+                                             TextChanged="MarkDirty_TextChanged"/>
+                                    <TextBlock Text="(e.g. KIOSK-01, TILL-2)" VerticalAlignment="Center" Foreground="#9ED0FF" Margin="8,0,0,0"/>
+                                </WrapPanel>
                                 <WrapPanel Margin="0,0,0,4">
                                     <TextBlock Text="Password" VerticalAlignment="Center" Margin="0,0,8,0" Width="80"/>
                                     <PasswordBox x:Name="CredentialPasswordBox" Width="220" PasswordChanged="CredentialPassword_Changed"/>
@@ -228,6 +235,13 @@
                                  Text="{Binding CacheMaintenanceIntervalMinutes, UpdateSourceTrigger=PropertyChanged}"
                                  TextChanged="MarkDirty_TextChanged"/>
                         <TextBlock Text="(min 5)" VerticalAlignment="Center" Foreground="#9ED0FF" Margin="6,0,0,0"/>
+                    </WrapPanel>
+                    <WrapPanel Margin="0,0,0,8">
+                        <TextBlock Text="Only clear when idle for" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBox Width="50"
+                                 Text="{Binding CacheMaintenanceIdleThresholdMinutes, UpdateSourceTrigger=PropertyChanged}"
+                                 TextChanged="MarkDirty_TextChanged"/>
+                        <TextBlock Text="minutes  (0 = always clear immediately)" VerticalAlignment="Center" Foreground="#9ED0FF" Margin="6,0,0,0"/>
                     </WrapPanel>
                     <WrapPanel Margin="0,0,0,8">
                         <TextBlock Text="Clear scope" VerticalAlignment="Center" Margin="0,0,8,0"/>

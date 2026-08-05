@@ -44,6 +44,7 @@ public sealed class AdminSettingsViewModel : ObservableObject
     private int _cacheMaintenanceIntervalMinutes = 60;
     private string _cacheMaintenanceScope = "cacheAndSession";
     private bool _cacheMaintenanceReloadAfterClear = true;
+    private int _cacheMaintenanceIdleThresholdMinutes = 5;
     private string _cacheClearResult = string.Empty;
 
     public ObservableCollection<AdminScreenItemViewModel> Screens { get; } = [];
@@ -61,6 +62,7 @@ public sealed class AdminSettingsViewModel : ObservableObject
     public int CacheMaintenanceIntervalMinutes { get => _cacheMaintenanceIntervalMinutes; set => SetProperty(ref _cacheMaintenanceIntervalMinutes, value); }
     public string CacheMaintenanceScope { get => _cacheMaintenanceScope; set => SetProperty(ref _cacheMaintenanceScope, value); }
     public bool CacheMaintenanceReloadAfterClear { get => _cacheMaintenanceReloadAfterClear; set => SetProperty(ref _cacheMaintenanceReloadAfterClear, value); }
+    public int CacheMaintenanceIdleThresholdMinutes { get => _cacheMaintenanceIdleThresholdMinutes; set => SetProperty(ref _cacheMaintenanceIdleThresholdMinutes, value); }
     public string CacheClearResult { get => _cacheClearResult; set => SetProperty(ref _cacheClearResult, value); }
 
     public AdminSettingsViewModel(
@@ -112,6 +114,7 @@ public sealed class AdminSettingsViewModel : ObservableObject
         CacheMaintenanceIntervalMinutes = cm.IntervalMinutes;
         CacheMaintenanceScope = cm.Scope;
         CacheMaintenanceReloadAfterClear = cm.ReloadAfterClear;
+        CacheMaintenanceIdleThresholdMinutes = cm.IdleThresholdMinutes;
 
         RefreshDisplayTiles();
         RefreshDiagnostics();
@@ -165,7 +168,8 @@ public sealed class AdminSettingsViewModel : ObservableObject
                     Enabled = CacheMaintenanceEnabled,
                     IntervalMinutes = CacheMaintenanceIntervalMinutes,
                     Scope = CacheMaintenanceScope,
-                    ReloadAfterClear = CacheMaintenanceReloadAfterClear
+                    ReloadAfterClear = CacheMaintenanceReloadAfterClear,
+                    IdleThresholdMinutes = CacheMaintenanceIdleThresholdMinutes
                 }
             }
         };
@@ -208,7 +212,8 @@ public sealed class AdminSettingsViewModel : ObservableObject
         try
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            await _kioskSupervisor.ClearCacheAllAsync(CacheMaintenanceScope, CacheMaintenanceReloadAfterClear);
+            // Manual clears bypass the idle check (admin has made a deliberate choice).
+            await _kioskSupervisor.ClearCacheAllAsync(CacheMaintenanceScope, CacheMaintenanceReloadAfterClear, idleThresholdMinutes: 0);
             sw.Stop();
             CacheClearResult = $"Cache cleared ({sw.ElapsedMilliseconds} ms).";
         }
