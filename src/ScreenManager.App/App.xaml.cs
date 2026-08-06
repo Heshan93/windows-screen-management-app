@@ -144,6 +144,12 @@ public partial class App : System.Windows.Application
 		StartupDiagnostics.Write("Stage 4: Single-instance guard acquired.");
 
 		var browserOptions = KioskBrowserOptions.Create(bootstrap.ProgramDataRoot);
+
+		// Apply autoplay registry policies before WebView2 initializes.
+		// Extract unique domains from configured screen URLs for the allowlist.
+		var autoplayDomains = GetAutoplayDomains(bootstrap.ProgramDataRoot);
+		Browser.AutoplayPolicyEnforcer.Apply(autoplayDomains);
+
 		StartupDiagnostics.Write("Stage 5: Building DI host.");
 
 		_host = Host.CreateDefaultBuilder()
@@ -568,6 +574,33 @@ public partial class App : System.Windows.Application
 			{
 				return false;
 			}
+		}
+	}
+
+	/// <summary>
+	/// Reads config early (before DI) to extract unique URL hosts for the autoplay allowlist.
+	/// </summary>
+	private static IReadOnlyList<string> GetAutoplayDomains(string programDataRoot)
+	{
+		try
+		{
+			var configPath = Path.Combine(programDataRoot, "config.json");
+			if (!File.Exists(configPath)) return [];
+
+			var json = File.ReadAllText(configPath);
+			var config = JsonSerializer.Deserialize<OrderBuddy.ScreenManager.Core.Config.AppConfig>(json);
+			if (config is null) return [];
+
+			return config.Screens
+				.Where(s => s.Enabled && !string.IsNullOrEmpty(s.Url))
+				.Select(s => Uri.TryCreate(s.Url, UriKind.Absolute, out var u) ? u.Host : null)
+				.Where(h => !string.IsNullOrEmpty(h))
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToList()!;
+		}
+		catch
+		{
+			return [];
 		}
 	}
 }
