@@ -259,7 +259,21 @@
                               Checked="MarkDirty_Toggled"
                               Unchecked="MarkDirty_Toggled"/>
                     <TextBlock Text="Note: 'Cache + session' logs the kiosk out. Enable Auto-login on the screen to re-authenticate automatically."
-                               TextWrapping="Wrap" Foreground="#9ED0FF" Margin="0,0,0,8"/>
+                               TextWrapping="Wrap" Foreground="#9ED0FF" Margin="0,0,0,20"/>
+
+                    <TextBlock Text="Card-terminal payments" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <CheckBox Content="Disable web security / CORS (--disable-web-security)"
+                              IsChecked="{Binding DisableWebSecurity}"
+                              Margin="0,0,0,8"
+                              Checked="MarkDirty_Toggled"
+                              Unchecked="MarkDirty_Toggled"/>
+                    <CheckBox Content="Ignore certificate errors (--ignore-certificate-errors)"
+                              IsChecked="{Binding IgnoreCertificateErrors}"
+                              Margin="0,0,0,8"
+                              Checked="MarkDirty_Toggled"
+                              Unchecked="MarkDirty_Toggled"/>
+                    <TextBlock Text="Required for direct browser-to-card-terminal payments. Applies to all screens. Restart the app after saving for changes to take effect."
+                               TextWrapping="Wrap" Foreground="#FFC857" Margin="0,0,0,8"/>
                 </StackPanel>
             </TabItem>
             <TabItem Header="Advanced">

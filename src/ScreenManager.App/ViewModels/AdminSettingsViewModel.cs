@@ -47,6 +47,9 @@ public sealed class AdminSettingsViewModel : ObservableObject
     private int _cacheMaintenanceIdleThresholdMinutes = 5;
     private string _cacheClearResult = string.Empty;
 
+    private bool _disableWebSecurity = true;
+    private bool _ignoreCertificateErrors = true;
+
     public ObservableCollection<AdminScreenItemViewModel> Screens { get; } = [];
     public ObservableCollection<DisplayTileViewModel> DisplayTiles { get; } = [];
 
@@ -64,6 +67,9 @@ public sealed class AdminSettingsViewModel : ObservableObject
     public bool CacheMaintenanceReloadAfterClear { get => _cacheMaintenanceReloadAfterClear; set => SetProperty(ref _cacheMaintenanceReloadAfterClear, value); }
     public int CacheMaintenanceIdleThresholdMinutes { get => _cacheMaintenanceIdleThresholdMinutes; set => SetProperty(ref _cacheMaintenanceIdleThresholdMinutes, value); }
     public string CacheClearResult { get => _cacheClearResult; set => SetProperty(ref _cacheClearResult, value); }
+
+    public bool DisableWebSecurity { get => _disableWebSecurity; set => SetProperty(ref _disableWebSecurity, value); }
+    public bool IgnoreCertificateErrors { get => _ignoreCertificateErrors; set => SetProperty(ref _ignoreCertificateErrors, value); }
 
     public AdminSettingsViewModel(
         IConfigService configService,
@@ -115,6 +121,10 @@ public sealed class AdminSettingsViewModel : ObservableObject
         CacheMaintenanceScope = cm.Scope;
         CacheMaintenanceReloadAfterClear = cm.ReloadAfterClear;
         CacheMaintenanceIdleThresholdMinutes = cm.IdleThresholdMinutes;
+
+        var overrides = _configService.CurrentConfig.General.BrowserSecurityOverrides;
+        DisableWebSecurity = overrides.DisableWebSecurity;
+        IgnoreCertificateErrors = overrides.IgnoreCertificateErrors;
 
         RefreshDisplayTiles();
         RefreshDiagnostics();
@@ -170,6 +180,11 @@ public sealed class AdminSettingsViewModel : ObservableObject
                     Scope = CacheMaintenanceScope,
                     ReloadAfterClear = CacheMaintenanceReloadAfterClear,
                     IdleThresholdMinutes = CacheMaintenanceIdleThresholdMinutes
+                },
+                BrowserSecurityOverrides = final.General.BrowserSecurityOverrides with
+                {
+                    DisableWebSecurity = DisableWebSecurity,
+                    IgnoreCertificateErrors = IgnoreCertificateErrors
                 }
             }
         };

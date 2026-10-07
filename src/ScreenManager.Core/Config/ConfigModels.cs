@@ -44,7 +44,21 @@ public sealed record GeneralSettings
     public CacheSettings Cache { get; init; } = new();
     public NightlyMaintenanceSettings NightlyMaintenance { get; init; } = new();
     public CacheMaintenanceSettings CacheMaintenance { get; init; } = new();
+    public BrowserSecurityOverrides BrowserSecurityOverrides { get; init; } = new();
     public string AdminPinHash { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Device-wide Chromium flags for direct browser-to-card-terminal payments (e.g. local terminal with
+/// self-signed cert / no CORS headers). Applies to every screen; requires an app restart.
+/// </summary>
+public sealed record BrowserSecurityOverrides
+{
+    /// <summary>Adds <c>--disable-web-security</c> (disables CORS / same-origin policy).</summary>
+    public bool DisableWebSecurity { get; init; } = true;
+
+    /// <summary>Adds <c>--ignore-certificate-errors</c> (accepts any TLS certificate, incl. fetch/WebSocket).</summary>
+    public bool IgnoreCertificateErrors { get; init; } = true;
 }
 
 public sealed record CacheSettings
