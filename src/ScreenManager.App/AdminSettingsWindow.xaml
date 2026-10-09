@@ -272,6 +272,11 @@
                               Margin="0,0,0,8"
                               Checked="MarkDirty_Toggled"
                               Unchecked="MarkDirty_Toggled"/>
+                    <CheckBox Content="Allow HTTPS page to call http:// LAN proxy (--allow-running-insecure-content)"
+                              IsChecked="{Binding AllowInsecureContent}"
+                              Margin="0,0,0,8"
+                              Checked="MarkDirty_Toggled"
+                              Unchecked="MarkDirty_Toggled"/>
                     <TextBlock Text="Required for direct browser-to-card-terminal payments. Applies to all screens. Restart the app after saving for changes to take effect."
                                TextWrapping="Wrap" Foreground="#FFC857" Margin="0,0,0,8"/>
                 </StackPanel>

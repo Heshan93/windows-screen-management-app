@@ -79,7 +79,7 @@ public sealed class P13CacheAndCredentialsTests
         var s = new CacheMaintenanceSettings();
         s.Enabled.Should().BeTrue();
         s.IntervalMinutes.Should().Be(60);
-        s.Scope.Should().Be("cacheAndSession");
+        s.Scope.Should().Be("cacheOnly");
         s.ReloadAfterClear.Should().BeTrue();
         s.IdleThresholdMinutes.Should().Be(5);
     }
@@ -90,7 +90,7 @@ public sealed class P13CacheAndCredentialsTests
         var config = AppConfig.CreateDefault();
         var json = JsonSerializer.Serialize(config);
         var rt = JsonSerializer.Deserialize<AppConfig>(json)!;
-        rt.General.CacheMaintenance.Scope.Should().Be("cacheAndSession");
+        rt.General.CacheMaintenance.Scope.Should().Be("cacheOnly");
         rt.General.CacheMaintenance.IntervalMinutes.Should().Be(60);
     }
 
@@ -152,7 +152,7 @@ public sealed class P13CacheAndCredentialsTests
         config.General.CacheMaintenance.Should().NotBeNull();
         config.General.CacheMaintenance.Enabled.Should().BeTrue();
         config.General.CacheMaintenance.IntervalMinutes.Should().Be(60);
-        config.General.CacheMaintenance.Scope.Should().Be("cacheAndSession");
+        config.General.CacheMaintenance.Scope.Should().Be("cacheOnly");
         diagnostic.Should().Contain("3");
     }
 
@@ -211,7 +211,7 @@ public sealed class P13CacheAndCredentialsTests
             }
         };
         var result = ConfigValidator.Normalize(config);
-        result.NormalizedConfig.General.CacheMaintenance.Scope.Should().Be("cacheAndSession");
+        result.NormalizedConfig.General.CacheMaintenance.Scope.Should().Be("cacheOnly");
         result.Diagnostics.Should().Contain(d => d.Contains("scope"));
     }
 

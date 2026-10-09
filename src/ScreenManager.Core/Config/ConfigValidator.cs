@@ -80,8 +80,8 @@ internal static class ConfigValidator
         var cacheScope = cacheMaintenance.Scope;
         if (!validScopes.Contains(cacheScope))
         {
-            cacheScope = "cacheAndSession";
-            diagnostics.Add($"general.cacheMaintenance.scope '{cacheMaintenance.Scope}' invalid; reset to cacheAndSession.");
+            cacheScope = "cacheOnly";
+            diagnostics.Add($"general.cacheMaintenance.scope '{cacheMaintenance.Scope}' invalid; reset to cacheOnly.");
         }
 
         cacheMaintenance = cacheMaintenance with

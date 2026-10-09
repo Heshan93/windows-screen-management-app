@@ -34,6 +34,7 @@ public partial class App : System.Windows.Application
 	private INightlyMaintenanceScheduler? _nightlyMaintenanceScheduler;
 	private ICacheMaintenanceScheduler? _cacheMaintenanceScheduler;
 	private IAutoStartService? _autoStartService;
+	private NetworkStatusMonitor? _networkStatusMonitor;
 
 	public App()
 	{
@@ -169,6 +170,7 @@ public partial class App : System.Windows.Application
 				services.AddSingleton<IAutoStartService, WindowsAutoStartService>();
 				services.AddSingleton<ILastConnectionStore, LastConnectionStore>();
 				services.AddSingleton<Serilog.ILogger>(Log.Logger);
+				services.AddSingleton<NetworkStatusMonitor>();
 				services.AddSingleton<KioskSupervisor>();
 				services.AddSingleton<INightlyMaintenanceScheduler, NightlyMaintenanceScheduler>();
 				services.AddSingleton<ICacheMaintenanceScheduler, CacheMaintenanceScheduler>();
@@ -193,6 +195,8 @@ public partial class App : System.Windows.Application
 
 		_keyboardLockService = _host.Services.GetRequiredService<IKeyboardLockService>();
 		_autoStartService = _host.Services.GetRequiredService<IAutoStartService>();
+		_networkStatusMonitor = _host.Services.GetRequiredService<NetworkStatusMonitor>();
+		_networkStatusMonitor.Start();
 		var healthMonitor = _host.Services.GetRequiredService<IHealthMonitor>();
 		healthMonitor.ApplySettings(
 			_configService.CurrentConfig.General.RetryBackoffSec,
@@ -447,6 +451,7 @@ public partial class App : System.Windows.Application
 		}
 
 		_supervisor?.Dispose();
+		_networkStatusMonitor?.Dispose();
 
 		if (_host is not null)
 		{
@@ -465,15 +470,31 @@ public partial class App : System.Windows.Application
 
 	private static void ConfigureSerilog(BootstrapConfiguration bootstrap)
 	{
+		var mainLevel = bootstrap.ParsedLogLevel;
+
+		// Network diagnostics always record at Information, even when the main log level is higher.
+		var rootLevel = mainLevel < LogEventLevel.Information ? mainLevel : LogEventLevel.Information;
+
 		var loggerConfiguration = new LoggerConfiguration()
-			.MinimumLevel.Is(bootstrap.ParsedLogLevel)
-			.WriteTo.File(
-				Path.Combine(bootstrap.LogDirectory, "screen-manager-.log"),
-				rollingInterval: RollingInterval.Day,
-				fileSizeLimitBytes: 10 * 1024 * 1024,
-				retainedFileCountLimit: 14,
-				rollOnFileSizeLimit: true,
-				shared: true);
+			.MinimumLevel.Is(rootLevel)
+			.WriteTo.Logger(main => main
+				.Filter.ByExcluding(e => e.Level < mainLevel || (IsNetworkEvent(e) && e.Level < LogEventLevel.Warning))
+				.WriteTo.File(
+					Path.Combine(bootstrap.LogDirectory, "screen-manager-.log"),
+					rollingInterval: RollingInterval.Day,
+					fileSizeLimitBytes: 10 * 1024 * 1024,
+					retainedFileCountLimit: 14,
+					rollOnFileSizeLimit: true,
+					shared: true))
+			.WriteTo.Logger(network => network
+				.Filter.ByIncludingOnly(IsNetworkEvent)
+				.WriteTo.File(
+					Path.Combine(bootstrap.LogDirectory, "network-.log"),
+					rollingInterval: RollingInterval.Day,
+					fileSizeLimitBytes: 20 * 1024 * 1024,
+					retainedFileCountLimit: 14,
+					rollOnFileSizeLimit: true,
+					shared: true));
 
 		try
 		{
@@ -489,6 +510,11 @@ public partial class App : System.Windows.Application
 
 		Log.Logger = loggerConfiguration.CreateLogger();
 	}
+
+	private static bool IsNetworkEvent(LogEvent logEvent) =>
+		logEvent.Properties.TryGetValue("SourceContext", out var value)
+		&& value is ScalarValue { Value: string context }
+		&& context.StartsWith("OrderBuddy.Network.", StringComparison.Ordinal);
 
 	internal sealed record BootstrapConfiguration(string ProgramDataRoot, string LogDirectory, string LogLevel)
 	{

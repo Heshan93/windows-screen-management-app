@@ -42,13 +42,14 @@ public sealed class AdminSettingsViewModel : ObservableObject
     // Cache maintenance (P13)
     private bool _cacheMaintenanceEnabled;
     private int _cacheMaintenanceIntervalMinutes = 60;
-    private string _cacheMaintenanceScope = "cacheAndSession";
+    private string _cacheMaintenanceScope = "cacheOnly";
     private bool _cacheMaintenanceReloadAfterClear = true;
     private int _cacheMaintenanceIdleThresholdMinutes = 5;
     private string _cacheClearResult = string.Empty;
 
     private bool _disableWebSecurity = true;
     private bool _ignoreCertificateErrors = true;
+    private bool _allowInsecureContent = true;
 
     public ObservableCollection<AdminScreenItemViewModel> Screens { get; } = [];
     public ObservableCollection<DisplayTileViewModel> DisplayTiles { get; } = [];
@@ -70,6 +71,7 @@ public sealed class AdminSettingsViewModel : ObservableObject
 
     public bool DisableWebSecurity { get => _disableWebSecurity; set => SetProperty(ref _disableWebSecurity, value); }
     public bool IgnoreCertificateErrors { get => _ignoreCertificateErrors; set => SetProperty(ref _ignoreCertificateErrors, value); }
+    public bool AllowInsecureContent { get => _allowInsecureContent; set => SetProperty(ref _allowInsecureContent, value); }
 
     public AdminSettingsViewModel(
         IConfigService configService,
@@ -125,6 +127,7 @@ public sealed class AdminSettingsViewModel : ObservableObject
         var overrides = _configService.CurrentConfig.General.BrowserSecurityOverrides;
         DisableWebSecurity = overrides.DisableWebSecurity;
         IgnoreCertificateErrors = overrides.IgnoreCertificateErrors;
+        AllowInsecureContent = overrides.AllowInsecureContent;
 
         RefreshDisplayTiles();
         RefreshDiagnostics();
@@ -184,7 +187,8 @@ public sealed class AdminSettingsViewModel : ObservableObject
                 BrowserSecurityOverrides = final.General.BrowserSecurityOverrides with
                 {
                     DisableWebSecurity = DisableWebSecurity,
-                    IgnoreCertificateErrors = IgnoreCertificateErrors
+                    IgnoreCertificateErrors = IgnoreCertificateErrors,
+                    AllowInsecureContent = AllowInsecureContent
                 }
             }
         };

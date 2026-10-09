@@ -32,6 +32,11 @@ public sealed class WebViewEnvironmentProvider : IWebViewEnvironmentProvider
             args.Add("--ignore-certificate-errors");
         }
 
+        if (overrides.AllowInsecureContent)
+        {
+            args.Add("--allow-running-insecure-content");
+        }
+
         return string.Join(' ', args.Where(a => !string.IsNullOrWhiteSpace(a)));
     }
 
@@ -55,12 +60,13 @@ public sealed class WebViewEnvironmentProvider : IWebViewEnvironmentProvider
             userDataFolder: _options.UserDataDirectory,
             options: envOptions);
 
-        if (overrides.DisableWebSecurity || overrides.IgnoreCertificateErrors)
+        if (overrides.DisableWebSecurity || overrides.IgnoreCertificateErrors || overrides.AllowInsecureContent)
         {
             _logger.Warning(
-                "Browser security overrides ACTIVE for all screens. DisableWebSecurity: {DisableWebSecurity}, IgnoreCertificateErrors: {IgnoreCertificateErrors}",
+                "Browser security overrides ACTIVE for all screens. DisableWebSecurity: {DisableWebSecurity}, IgnoreCertificateErrors: {IgnoreCertificateErrors}, AllowInsecureContent: {AllowInsecureContent}",
                 overrides.DisableWebSecurity,
-                overrides.IgnoreCertificateErrors);
+                overrides.IgnoreCertificateErrors,
+                overrides.AllowInsecureContent);
         }
 
         _logger.Information(

@@ -59,6 +59,9 @@ public sealed record BrowserSecurityOverrides
 
     /// <summary>Adds <c>--ignore-certificate-errors</c> (accepts any TLS certificate, incl. fetch/WebSocket).</summary>
     public bool IgnoreCertificateErrors { get; init; } = true;
+
+    /// <summary>Adds <c>--allow-running-insecure-content</c> so an HTTPS page may call an http:// LAN proxy (otherwise blocked as mixed content).</summary>
+    public bool AllowInsecureContent { get; init; } = true;
 }
 
 public sealed record CacheSettings
@@ -74,7 +77,7 @@ public sealed record CacheMaintenanceSettings
 
     /// <summary>"cacheOnly" clears DiskCache+CacheStorage (keeps session).
     /// "cacheAndSession" also clears Cookies+AllDomStorage (logs out).</summary>
-    public string Scope { get; init; } = "cacheAndSession";
+    public string Scope { get; init; } = "cacheOnly";
 
     public bool ReloadAfterClear { get; init; } = true;
 

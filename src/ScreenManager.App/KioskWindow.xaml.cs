@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using OrderBuddy.ScreenManager.App.Browser;
+using OrderBuddy.ScreenManager.App.Diagnostics;
 using OrderBuddy.ScreenManager.App.Security;
 using OrderBuddy.ScreenManager.App.Status;
 using OrderBuddy.ScreenManager.Core.Config;
@@ -58,6 +59,8 @@ public partial class KioskWindow : Window
     private readonly ISystemClock _clock;
     private readonly ILastConnectionStore _lastConnectionStore;
     private readonly IAdminAccessService _adminAccessService;
+    private readonly NetworkStatusMonitor _networkStatusMonitor;
+    private readonly Serilog.ILogger _networkLog;
     private readonly IServiceProvider _services;
     private readonly Stopwatch _coldStartStopwatch = new();
     private readonly DispatcherTimer _healthTickTimer;
@@ -66,6 +69,9 @@ public partial class KioskWindow : Window
     private readonly HttpClient _connectivityClient = new() { Timeout = TimeSpan.FromSeconds(5) };
 
     private WebView2? _webView;
+    private NetworkActivityLogger? _networkActivityLogger;
+    private ulong _latestNavigationId;
+    private string? _lastWebAppStorageSnapshot;
     private int _processFailureCount;
     private ScreenConfig? _activeScreen;
     private DisplayInfo? _activeDisplay;
@@ -88,6 +94,7 @@ public partial class KioskWindow : Window
         ISystemClock clock,
         ILastConnectionStore lastConnectionStore,
         IAdminAccessService adminAccessService,
+        NetworkStatusMonitor networkStatusMonitor,
         IServiceProvider services)
     {
         _browserOptions = browserOptions;
@@ -98,6 +105,8 @@ public partial class KioskWindow : Window
         _clock = clock;
         _lastConnectionStore = lastConnectionStore;
         _adminAccessService = adminAccessService;
+        _networkStatusMonitor = networkStatusMonitor;
+        _networkLog = NetworkActivityLogger.CreateLogger(logger);
         _services = services;
 
         // Keep these dependencies in the constructor to prove P0 DI contracts remain valid.
@@ -333,6 +342,12 @@ public partial class KioskWindow : Window
             ConfigureWebViewSettings(webView.CoreWebView2.Settings);
             HookWebViewEvents(webView.CoreWebView2);
             await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(HeartbeatScript);
+            _networkActivityLogger = await NetworkActivityLogger.AttachAsync(
+                webView.CoreWebView2,
+                _activeScreen.Id,
+                _logger,
+                _networkStatusMonitor);
+            _lastWebAppStorageSnapshot = null;
 
             ApplyZoomAndRotation(webView, _activeScreen);
             _logger.Information(
@@ -483,6 +498,20 @@ public partial class KioskWindow : Window
                 e.HttpStatusCode);
 
             _ = CapturePageDiagnosticsAsync(_activeScreen.Id);
+            _ = LogWebAppStorageSnapshotAsync(_activeScreen.Id);
+            return;
+        }
+
+        // A navigation replaced by a newer one (user tap, page redirect, reload) completes as
+        // ConnectionAborted/OperationCanceled; it is not an outage and must not trigger recovery.
+        if (e.NavigationId != _latestNavigationId)
+        {
+            _logger.Information(
+                "Navigation superseded by a newer navigation; not treated as a failure. ScreenId: {ScreenId}, NavigationId: {NavigationId}, LatestNavigationId: {LatestNavigationId}, WebErrorStatus: {WebErrorStatus}",
+                _activeScreen.Id,
+                e.NavigationId,
+                _latestNavigationId,
+                e.WebErrorStatus);
             return;
         }
 
@@ -504,6 +533,8 @@ public partial class KioskWindow : Window
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
+        _latestNavigationId = e.NavigationId;
+
         if (_activeScreen is null)
         {
             return;
@@ -1345,6 +1376,9 @@ public partial class KioskWindow : Window
 
     private void CleanupWebView()
     {
+        _networkActivityLogger?.Dispose();
+        _networkActivityLogger = null;
+
         if (_webView is not null)
         {
             try
@@ -1529,6 +1563,41 @@ public partial class KioskWindow : Window
         catch (Exception ex)
         {
             _logger.Debug(ex, "Failed to capture page diagnostics snapshot. ScreenId: {ScreenId}", screenId);
+        }
+    }
+
+    private const string WebAppStorageScript =
+        "(function(){try{var o={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);" +
+        "if(k&&k.indexOf('ob_')===0){var v=localStorage.getItem(k);try{o[k]=JSON.parse(v);}catch(_){o[k]=v;}}}" +
+        "return JSON.stringify({origin:location.origin,localStorageKeys:localStorage.length,ob:o});}" +
+        "catch(e){return JSON.stringify({error:String(e)});}})()";
+
+    // Logs the web app's persisted device/terminal settings (ob_* keys) whenever they change.
+    private async Task LogWebAppStorageSnapshotAsync(string screenId)
+    {
+        if (_webView?.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var raw = ReadScriptStringValue(await _webView.CoreWebView2.ExecuteScriptAsync(WebAppStorageScript));
+            var redacted = OrderBuddy.ScreenManager.Core.Security.SensitiveDataRedactor.Redact(raw, 4000, fingerprint: true);
+            if (string.Equals(redacted, _lastWebAppStorageSnapshot, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _lastWebAppStorageSnapshot = redacted;
+            _networkLog.Information(
+                "Web app stored settings (localStorage ob_*). ScreenId: {ScreenId}, Snapshot: {Snapshot}",
+                screenId,
+                redacted);
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Failed to capture web app storage snapshot. ScreenId: {ScreenId}", screenId);
         }
     }
 
